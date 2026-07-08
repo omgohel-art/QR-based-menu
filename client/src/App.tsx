@@ -1,0 +1,47 @@
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import NotFound from "@/pages/NotFound";
+import { Route, Switch } from "wouter";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { CartProvider } from "./contexts/CartContext";
+import CustomerMenu from "./pages/CustomerMenu";
+import CartPage from "./pages/CartPage";
+import AdminPanel from "./pages/AdminPanel";
+
+function Router() {
+  return (
+    <Switch>
+      <Route path={"/"} component={AdminPanel} />
+      <Route path={"/table/:tableCode/cart"} component={CartPage} />
+      <Route path={"/table/:tableCode"} component={CustomerMenu} />
+      <Route path={"/404"} component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+// NOTE: About Theme
+// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
+//   to keep consistent foreground/background color across components
+// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider
+        defaultTheme="light"
+        // switchable
+      >
+        <TooltipProvider>
+          <CartProvider>
+            <Toaster />
+            <Router />
+          </CartProvider>
+        </TooltipProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default App;
