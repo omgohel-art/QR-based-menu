@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Settings, Clock, Users, TrendingUp, RefreshCw, Bell, Pencil, QrCode, Copy, Check, Receipt } from "lucide-react";
+import { Plus, Trash2, Settings, Clock, Users, TrendingUp, RefreshCw, Bell, Pencil, QrCode, Copy, Check, Receipt, AlertTriangle, CheckCircle } from "lucide-react";
 import QRCode from 'qrcode';
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
+import Footer from "@/components/marketing/Footer";
+import "@/components/LoadingRipple.css";
 
 export default function AdminPanel() {
   const queryClient = useQueryClient();
@@ -191,9 +193,6 @@ export default function AdminPanel() {
     queryKey: ['settledBills'],
     refetchInterval: 10000,
     queryFn: async () => {
-      const oneYearAgo = new Date();
-      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-
       const { data: settingsData } = await supabase.from('cafeSettings').select('*').limit(1);
       const scRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].serviceChargePercentage.toString()) : 0;
       const taxRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].taxPercentage.toString()) : 0;
@@ -202,7 +201,6 @@ export default function AdminPanel() {
         .from('sessions')
         .select('*')
         .eq('status', 'settled')
-        .gte('createdAt', oneYearAgo.toISOString())
         .order('settledAt', { ascending: false });
 
       if (!sessions || sessions.length === 0) return [];
@@ -232,8 +230,8 @@ export default function AdminPanel() {
     }
   });
 
-  // Orders Queries
-  const { data: activeTables, isLoading: isLoadingOrders, refetch: refetchOrders } = useQuery({
+  // Orders Queries - Individual orders as separate cards
+  const { data: activeOrders, isLoading: isLoadingOrders, refetch: refetchOrders } = useQuery({
     queryKey: ['activeTables'],
     refetchInterval: 3000,
     queryFn: async () => {
@@ -241,55 +239,134 @@ export default function AdminPanel() {
       const scRate = settingsData ? parseFloat(settingsData.serviceChargePercentage.toString()) : 0;
       const taxRate = settingsData ? parseFloat(settingsData.taxPercentage.toString()) : 0;
 
-      const { data: tables } = await supabase.from('tables').select('*');
-      if (!tables) return [];
+      // Get all open sessions
+      const { data: sessions } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('status', 'open');
 
-      const result = [];
-      for (const table of tables) {
-        const { data: session } = await supabase.from('sessions')
-          .select('*')
-          .eq('tableId', table.id)
-          .eq('status', 'open')
-          .single();
-          
-        if (session) {
-          const { data: orders } = await supabase.from('orders')
-            .select('id')
-            .eq('sessionId', session.id);
+      if (!sessions || sessions.length === 0) return [];
 
-          let itemCount = 0;
+      // Get all orders for these sessions
+      const sessionIds = sessions.map((s: any) => s.id);
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('*')
+        .in('sessionId', sessionIds)
+        .order('id', { ascending: true });
 
-          if (orders && orders.length > 0) {
-            const orderIds = orders.map(o => o.id);
-            const { data: items } = await supabase.from('orderItems')
-              .select('quantity')
-              .in('orderId', orderIds);
+      if (!orders || orders.length === 0) return [];
 
-            if (items) {
-              items.forEach(item => {
-                itemCount += item.quantity;
-              });
-            }
-          }
+      // Get all order items
+      const orderIds = orders.map((o: any) => o.id);
+      const { data: orderItems } = await supabase
+        .from('orderItems')
+        .select('*')
+        .in('orderId', orderIds);
 
-          const subtotal = parseFloat(session.subtotal) || 0;
-          const sc = subtotal * (scRate / 100);
-          const tax = (subtotal + sc) * (taxRate / 100);
+      // Get menu item names
+      const menuItemIds = Array.from(new Set((orderItems || []).map((i: any) => i.menuItemId)));
+      const { data: menuItemsData } = await supabase
+        .from('menuItems')
+        .select('id, name')
+        .in('id', menuItemIds);
+      const menuItemMap = new Map((menuItemsData || []).map((m: any) => [m.id, m.name]));
 
-          result.push({
-            id: table.id,
-            label: table.label,
-            status: table.status,
+      // Get table labels
+      const tableIds = sessions.map((s: any) => s.tableId);
+      const { data: tables } = await supabase
+        .from('tables')
+        .select('id, label')
+        .in('id', tableIds);
+      const tableLabelMap = new Map((tables || []).map((t: any) => [t.id, t.label]));
+
+      // Group orders by table
+      const tableMap = new Map<number, {
+        tableLabel: string;
+        sessionId: number;
+        orders: Array<{
+          id: number;
+          orderNumber: number | null;
+          submittedAt: string;
+          status: string;
+          subtotal: number;
+          itemCount: number;
+          items: Array<{
+            id: number;
+            menuItemName: string;
+            quantity: number;
+            priceAtOrderTime: number;
+          }>;
+        }>;
+      }>();
+
+      for (const session of sessions) {
+        const tableLabel = tableLabelMap.get(session.tableId) || 'Unknown';
+        const sessionOrders = orders.filter((o: any) => o.sessionId === session.id);
+        
+        if (!tableMap.has(session.tableId)) {
+          tableMap.set(session.tableId, {
+            tableLabel,
             sessionId: session.id,
+            orders: []
+          });
+        }
+
+        const tableData = tableMap.get(session.tableId)!;
+
+        for (const order of sessionOrders) {
+          const items = (orderItems || [])
+            .filter((i: any) => i.orderId === order.id)
+            .map((i: any) => ({
+              id: i.id,
+              menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`,
+              quantity: i.quantity,
+              priceAtOrderTime: parseFloat(i.priceAtOrderTime.toString()),
+            }));
+          
+          const subtotal = items.reduce((acc: number, item: any) => acc + (item.priceAtOrderTime * item.quantity), 0);
+          const itemCount = items.reduce((acc: number, item: any) => acc + item.quantity, 0);
+
+          tableData.orders.push({
+            id: order.id,
+            orderNumber: order.orderNumber,
+            submittedAt: order.submittedAt,
+            status: order.status || 'pending',
             subtotal,
-            serviceCharge: sc,
-            taxAmount: tax,
-            finalTotal: subtotal + sc + tax,
             itemCount,
-            lastActivityAt: session.lastActivityAt,
+            items,
           });
         }
       }
+
+      // Convert to array and calculate totals
+      const result: any[] = [];
+      const tableEntries = Array.from(tableMap.entries());
+      for (const [tableId, tableData] of tableEntries) {
+        const sessionSubtotal = tableData.orders.reduce((acc: number, o: any) => acc + o.subtotal, 0);
+        const sc = sessionSubtotal * (scRate / 100);
+        const tax = (sessionSubtotal + sc) * (taxRate / 100);
+        
+        // Check if there are any unpaid orders (pending or delivered, not settled)
+        const pendingOrders = tableData.orders.filter((o: any) => o.status !== 'settled');
+        const hasPaymentPending = pendingOrders.length > 0;
+        const oldestPendingOrder = hasPaymentPending ? pendingOrders[0] : null;
+
+        result.push({
+          id: tableId,
+          label: tableData.tableLabel,
+          sessionId: tableData.sessionId,
+          orders: tableData.orders,
+          subtotal: sessionSubtotal,
+          serviceCharge: sc,
+          taxAmount: tax,
+          finalTotal: sessionSubtotal + sc + tax,
+          lastActivityAt: tableData.orders[tableData.orders.length - 1]?.submittedAt || new Date().toISOString(),
+          hasPaymentPending,
+          oldestPendingOrder,
+        });
+      }
+
       return result;
     }
   });
@@ -317,15 +394,25 @@ export default function AdminPanel() {
       const { data: orders } = await supabase.from('orders').select('*').eq('sessionId', selectedSessionId);
       
       let allItems: any[] = [];
+      let ordersWithNumbers: any[] = [];
       if (orders && orders.length > 0) {
         const orderIds = orders.map(o => o.id);
         const { data: items } = await supabase.from('orderItems').select('*').in('orderId', orderIds);
         if (items && items.length > 0) {
           const menuItemIds = Array.from(new Set(items.map(i => i.menuItemId)));
-          const { data: menuItems } = await supabase.from('menuItems').select('id, name').in('id', menuItemIds);
-          const menuItemMap = new Map((menuItems || []).map(m => [m.id, m.name]));
+          const { data: menuItemsData } = await supabase.from('menuItems').select('id, name').in('id', menuItemIds);
+          const menuItemMap = new Map((menuItemsData || []).map(m => [m.id, m.name]));
           allItems = items.map(i => ({ ...i, menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}` }));
         }
+        // Sort orders by orderNumber if available, else by id
+        const sortedOrders = [...orders].sort((a, b) => {
+          if (a.orderNumber != null && b.orderNumber != null) return (a.orderNumber as number) - (b.orderNumber as number);
+          return a.id - b.id;
+        });
+        ordersWithNumbers = sortedOrders.map(o => ({
+          ...o,
+          items: allItems.filter(i => i.orderId === o.id)
+        }));
       }
 
       return {
@@ -337,7 +424,8 @@ export default function AdminPanel() {
           computedFinalTotal: subtotal + computedServiceCharge + computedTax,
         } : null,
         orders: orders || [],
-        items: allItems
+        items: allItems,
+        ordersWithNumbers
       };
     }
   });
@@ -481,25 +569,39 @@ export default function AdminPanel() {
     onError: (error: any) => toast.error(error.message),
   });
 
-  const settleSessionMutation = useMutation({
-    mutationFn: async (sessionId: number) => {
-      const { data: session } = await supabase.from('sessions').select('tableId').eq('id', sessionId).single();
-      if (!session) throw new Error("Session not found");
-      await supabase.from('sessions').update({
-        status: 'settled',
-        settledAt: new Date().toISOString()
-      }).eq('id', sessionId);
-      await supabase.from('tables').update({
-        status: 'empty',
-        activeSessionId: null
-      }).eq('id', session.tableId);
+  // Settle individual order
+  const settleOrderMutation = useMutation({
+    mutationFn: async (orderId: number) => {
+      const { error } = await supabase.from('orders').update({ status: 'settled' }).eq('id', orderId);
+      if (error) throw error;
+      
+      // Check if all orders in the session are settled
+      const { data: order } = await supabase.from('orders').select('sessionId').eq('id', orderId).single();
+      if (order) {
+        const { data: allOrders } = await supabase.from('orders').select('status').eq('sessionId', order.sessionId);
+        const allSettled = allOrders?.every(o => o.status === 'settled') ?? false;
+        
+        if (allSettled) {
+          const { data: session } = await supabase.from('sessions').select('tableId').eq('id', order.sessionId).single();
+          await supabase.from('sessions').update({
+            status: 'settled',
+            settledAt: new Date().toISOString()
+          }).eq('id', order.sessionId);
+          if (session) {
+            await supabase.from('tables').update({
+              status: 'empty',
+              activeSessionId: null
+            }).eq('id', session.tableId);
+          }
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['activeTables'] });
       queryClient.invalidateQueries({ queryKey: ['tables'] });
       queryClient.invalidateQueries({ queryKey: ['todayRevenue'] });
       queryClient.invalidateQueries({ queryKey: ['settledBills'] });
-      toast.success("Payment settled successfully");
+      toast.success("Order marked as paid");
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -511,6 +613,94 @@ export default function AdminPanel() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settledBills'] });
       toast.success("Bill removed from list");
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  // Order Queue - pending orders not yet delivered
+  const { data: orderQueue, isLoading: isLoadingQueue } = useQuery({
+    queryKey: ['orderQueue'],
+    refetchInterval: 3000,
+    queryFn: async () => {
+      // Get all open sessions
+      const { data: sessions } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('status', 'open');
+
+      if (!sessions || sessions.length === 0) return [];
+
+      // Get all orders for these sessions
+      const sessionIds = sessions.map((s: any) => s.id);
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('*')
+        .in('sessionId', sessionIds)
+        .eq('status', 'pending')
+        .order('id', { ascending: true });
+
+      if (!orders || orders.length === 0) return [];
+
+      // Get all order items
+      const orderIds = orders.map((o: any) => o.id);
+      const { data: orderItems } = await supabase
+        .from('orderItems')
+        .select('*')
+        .in('orderId', orderIds);
+
+      // Get menu item names
+      const menuItemIds = Array.from(new Set((orderItems || []).map((i: any) => i.menuItemId)));
+      const { data: menuItemsData } = await supabase
+        .from('menuItems')
+        .select('id, name')
+        .in('id', menuItemIds);
+      const menuItemMap = new Map((menuItemsData || []).map((m: any) => [m.id, m.name]));
+
+      // Get table labels
+      const tableIds = sessions.map((s: any) => s.tableId);
+      const { data: tables } = await supabase
+        .from('tables')
+        .select('id, label')
+        .in('id', tableIds);
+      const tableLabelMap = new Map((tables || []).map((t: any) => [t.id, t.label]));
+
+      // Build order queue
+      const result: any[] = [];
+      for (const session of sessions) {
+        const sessionOrders = orders.filter((o: any) => o.sessionId === session.id);
+        for (const order of sessionOrders) {
+          const items = (orderItems || [])
+            .filter((i: any) => i.orderId === order.id)
+            .map((i: any) => ({
+              id: i.id,
+              menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`,
+              quantity: i.quantity,
+            }));
+
+          result.push({
+            id: order.id,
+            orderNumber: order.orderNumber,
+            tableLabel: tableLabelMap.get(session.tableId) || 'Unknown',
+            submittedAt: order.submittedAt,
+            items,
+          });
+        }
+      }
+
+      return result;
+    }
+  });
+
+  // Mark order as delivered
+  const markDeliveredMutation = useMutation({
+    mutationFn: async (orderId: number) => {
+      const { error } = await supabase.from('orders').update({ status: 'delivered' }).eq('id', orderId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['activeTables'] });
+      toast.success("Order marked as delivered");
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -564,9 +754,9 @@ export default function AdminPanel() {
 
   // Orders Notification
   useEffect(() => {
-    if (activeTables && activeTables.length > 0) {
+    if (activeOrders && activeOrders.length > 0) {
       const now = Date.now();
-      const hasNewOrders = activeTables.some(table => {
+      const hasNewOrders = activeOrders.some(table => {
         const lastActivity = new Date(table.lastActivityAt).getTime();
         return lastActivity > lastOrderTime;
       });
@@ -579,22 +769,23 @@ export default function AdminPanel() {
 
       setLastOrderTime(now);
     }
-  }, [activeTables, lastOrderTime]);
+  }, [activeOrders, lastOrderTime]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
       <div className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-slate-900">Admin Panel</h1>
-              <p className="text-sm text-slate-600 mt-1">Manage cafe operations (Supabase mode)</p>
+              <h1 className="text-xl md:text-3xl font-bold text-slate-900">Admin Panel</h1>
+              <p className="text-xs md:text-sm text-slate-600 mt-1">Manage cafe operations</p>
             </div>
             {activeTab === 'orders' && (
               <Button onClick={() => refetchOrders()} variant="outline" size="sm" className="gap-2">
                 <RefreshCw className="w-4 h-4" />
-                Refresh Orders
+                <span className="hidden sm:inline">Refresh Orders</span>
+                <span className="sm:hidden">Refresh</span>
               </Button>
             )}
           </div>
@@ -602,64 +793,67 @@ export default function AdminPanel() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8 bg-white border border-slate-200">
-            <TabsTrigger value="orders">Orders</TabsTrigger>
-            <TabsTrigger value="tables">Table Management</TabsTrigger>
-            <TabsTrigger value="menu">Menu Management</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsList className="flex w-full overflow-x-auto mb-6 md:mb-8 bg-white border border-slate-200">
+            <TabsTrigger value="orders" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Orders</TabsTrigger>
+            <TabsTrigger value="orderqueue" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Order Queue</TabsTrigger>
+            <TabsTrigger value="tables" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Tables</TabsTrigger>
+            <TabsTrigger value="menu" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Menu</TabsTrigger>
+            <TabsTrigger value="settings" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Settings</TabsTrigger>
           </TabsList>
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              <Card className="p-6 bg-white">
+              <Card className="p-4 md:p-6 bg-white">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-slate-600 mb-1">Active Tables</p>
-                    <p className="text-3xl font-bold text-slate-900">{activeTables?.length || 0}</p>
+                    <p className="text-2xl md:text-3xl font-bold text-slate-900">{activeOrders?.length || 0}</p>
                   </div>
-                  <Users className="w-10 h-10 text-blue-500 opacity-20" />
+                  <Users className="w-8 md:w-10 h-8 md:h-10 text-blue-500 opacity-20" />
                 </div>
               </Card>
 
-              <Card className="p-6 bg-white">
+              <Card className="p-4 md:p-6 bg-white">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-slate-600 mb-1">Total Items</p>
-                    <p className="text-3xl font-bold text-slate-900">
-                      {activeTables?.reduce((sum, t) => sum + t.itemCount, 0) || 0}
+                    <p className="text-2xl md:text-3xl font-bold text-slate-900">
+                      {activeOrders?.reduce((acc: number, t: any) => acc + t.orders.reduce((s: number, o: any) => s + o.itemCount, 0), 0) || 0}
                     </p>
                   </div>
-                  <TrendingUp className="w-10 h-10 text-green-500 opacity-20" />
+                  <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-green-500 opacity-20" />
                 </div>
               </Card>
 
-              <Card className="p-6 bg-white">
+              <Card className="p-4 md:p-6 bg-white">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-slate-600 mb-1">Total Revenue</p>
-                    <p className="text-3xl font-bold text-amber-600">
+                    <p className="text-2xl md:text-3xl font-bold text-blue-500">
                       ₹{(todayRevenue || 0).toFixed(2)}
                     </p>
                   </div>
-                  <TrendingUp className="w-10 h-10 text-amber-500 opacity-20" />
+                  <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-blue-400 opacity-20" />
                 </div>
               </Card>
             </div>
 
             {isLoadingOrders ? (
-              <div className="text-center py-12">
-                <div className="w-12 h-12 rounded-full border-4 border-slate-200 border-t-amber-600 animate-spin mx-auto mb-4"></div>
-                <p className="text-slate-600">Loading orders...</p>
+              <div className="flex items-center justify-center py-16">
+                <div className="ld-ripple">
+                  <div />
+                  <div />
+                </div>
               </div>
-            ) : activeTables && activeTables.length > 0 ? (
+            ) : activeOrders && activeOrders.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {activeTables.map(table => (
+                {activeOrders.map(table => (
                   <Card
                     key={table.id}
-                    className="p-6 hover:shadow-lg transition-shadow cursor-pointer bg-white"
+                    className="p-4 md:p-6 hover:shadow-lg transition-shadow cursor-pointer bg-white"
                     onClick={() => {
                       setSelectedSessionId(table.sessionId);
                       setSessionDetailsKey(k => k + 1);
@@ -674,18 +868,58 @@ export default function AdminPanel() {
                           {new Date(table.lastActivityAt).toLocaleTimeString()}
                         </p>
                       </div>
-                      <Badge
-                        variant={table.status === 'active' ? 'default' : 'secondary'}
-                        className={table.status === 'active' ? 'bg-green-600' : 'bg-amber-600'}
-                      >
-                        {table.status === 'active' ? 'Active' : 'Flagged'}
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1">
+                        {table.hasPaymentPending && table.oldestPendingOrder && (
+                          <Badge variant="outline" className="text-xs bg-blue-50 border-blue-300 text-blue-600">
+                            Payment pending
+                          </Badge>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Latest Order Items */}
+                    {table.orders.length > 0 && (
+                      <div className="space-y-1.5 mb-3">
+                        {table.orders[table.orders.length - 1].items.map((item: any) => (
+                          <div key={item.id} className="flex items-center justify-between text-sm">
+                            <span className="font-medium text-slate-900">{item.quantity}× {item.menuItemName}</span>
+                            <span className="text-slate-600">₹{(item.priceAtOrderTime * item.quantity).toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm font-semibold text-slate-900 mt-1 pt-1 border-t border-slate-200">
+                          <span>Subtotal</span>
+                          <span>₹{table.orders[table.orders.length - 1].subtotal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Payment Pending Box */}
+                    {table.hasPaymentPending && table.oldestPendingOrder && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
+                        <p className="text-xs font-semibold text-blue-800 mb-1">
+                          Order #{table.oldestPendingOrder.orderNumber?.toString().padStart(3, '0') || '?'} (Payment Pending)
+                        </p>
+                        <div className="space-y-0.5">
+                          {table.oldestPendingOrder.items.map((item: any) => (
+                            <div key={item.id} className="flex justify-between text-xs text-blue-900">
+                              <span>{item.quantity}× {item.menuItemName}</span>
+                              <span>₹{(item.priceAtOrderTime * item.quantity).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex justify-between text-xs font-semibold text-blue-900 mt-1 pt-1 border-t border-blue-200">
+                          <span>Subtotal</span>
+                          <span>₹{table.oldestPendingOrder.subtotal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-2 mb-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Items</span>
-                        <span className="font-semibold text-slate-900">{table.itemCount}</span>
+                        <span className="font-semibold text-slate-900">
+                          {table.orders.reduce((acc: number, o: any) => acc + o.itemCount, 0)}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-600">Subtotal</span>
@@ -705,7 +939,7 @@ export default function AdminPanel() {
                       )}
                       <div className="flex items-center justify-between border-t border-slate-200 pt-2">
                         <span className="text-sm font-semibold text-slate-700">Total</span>
-                        <span className="text-lg font-bold text-amber-600">₹{table.finalTotal.toFixed(2)}</span>
+                        <span className="text-lg font-bold text-blue-500">₹{table.finalTotal.toFixed(2)}</span>
                       </div>
                     </div>
 
@@ -717,27 +951,31 @@ export default function AdminPanel() {
                           setSessionDetailsKey(k => k + 1);
                           setShowDetails(true);
                         }}
-                        className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                        className="flex-1 btn-sweep"
                       >
                         View Details
                       </Button>
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          settleSessionMutation.mutate(table.sessionId);
-                        }}
-                        variant="outline"
-                        className="flex-1 border-green-600 text-green-700 hover:bg-green-50"
-                      >
-                        Mark as Paid
-                      </Button>
+                      {table.hasPaymentPending && (
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (table.oldestPendingOrder) {
+                              settleOrderMutation.mutate(table.oldestPendingOrder.id);
+                            }
+                          }}
+                          variant="outline"
+                          className="flex-1 btn-sweep-green"
+                        >
+                          Mark as Paid
+                        </Button>
+                      )}
                     </div>
                   </Card>
                 ))}
               </div>
             ) : (
-              <Card className="p-12 text-center bg-white">
-                <Bell className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+              <Card className="p-8 md:p-12 text-center bg-white">
+                <Bell className="w-10 md:w-12 h-10 md:h-12 text-slate-400 mx-auto mb-4" />
                 <p className="text-slate-600 font-medium">No active tables</p>
                 <p className="text-sm text-slate-500 mt-2">Orders will appear here when customers place them</p>
               </Card>
@@ -745,7 +983,7 @@ export default function AdminPanel() {
 
             {/* Session Details Dialog */}
             <Dialog open={showDetails} onOpenChange={setShowDetails}>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogContent className="max-w-full md:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Order Details</DialogTitle>
                 </DialogHeader>
@@ -792,7 +1030,7 @@ export default function AdminPanel() {
                         </div>
                         <div className="col-span-2">
                           <p className="text-slate-600">Final Total</p>
-                          <p className="font-semibold text-amber-600 text-lg">
+                          <p className="font-semibold text-blue-500 text-lg">
                             ₹{sessionDetails.session?.computedFinalTotal.toFixed(2)}
                           </p>
                         </div>
@@ -800,19 +1038,40 @@ export default function AdminPanel() {
                     </div>
 
                     <div>
-                      <h4 className="font-semibold text-slate-900 mb-3">Items Ordered</h4>
-                      <div className="space-y-2">
-                        {sessionDetails.items?.map(item => (
-                          <div key={item.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                            <div>
-                              <p className="font-medium text-slate-900">{item.menuItemName}</p>
-                              <p className="text-xs text-slate-600">
-                                ₹{typeof item.priceAtOrderTime === 'string'
-                                  ? parseFloat(item.priceAtOrderTime).toFixed(2)
-                                  : (item.priceAtOrderTime as number).toFixed(2)}
-                              </p>
+                      <h4 className="font-semibold text-slate-900 mb-3">Orders ({sessionDetails.ordersWithNumbers?.length || 0})</h4>
+                      <div className="space-y-4">
+                        {sessionDetails.ordersWithNumbers?.map(order => (
+                          <div key={order.id} className="border border-slate-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900">#{order.orderNumber?.toString().padStart(3, '0') || order.id}</span>
+                                <Badge
+                                  variant={order.status === 'settled' ? 'default' : 'secondary'}
+                                  className={order.status === 'settled' ? 'bg-green-600' : 'bg-blue-400'}
+                                >
+                                  {order.status === 'settled' ? 'Paid' : 'Pending'}
+                                </Badge>
+                              </div>
+                              <span className="text-xs text-slate-500">{new Date(order.submittedAt).toLocaleTimeString()}</span>
                             </div>
-                            <Badge variant="outline">{item.quantity}</Badge>
+                            <div className="space-y-1.5">
+                              {order.items?.map((item: any) => (
+                                <div key={item.id} className="flex items-center justify-between text-sm">
+                                  <div>
+                                    <p className="font-medium text-slate-900">{item.menuItemName}</p>
+                                    <p className="text-xs text-slate-500">
+                                      ₹{typeof item.priceAtOrderTime === 'string'
+                                        ? parseFloat(item.priceAtOrderTime).toFixed(2)
+                                        : (item.priceAtOrderTime as number).toFixed(2)}
+                                    </p>
+                                  </div>
+                                  <Badge variant="outline" className="text-xs">{item.quantity}</Badge>
+                                </div>
+                              ))}
+                              {order.items?.length === 0 && (
+                                <p className="text-xs text-slate-500 italic">No items in this order</p>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -823,14 +1082,67 @@ export default function AdminPanel() {
             </Dialog>
           </TabsContent>
 
+          {/* Order Queue Tab */}
+          <TabsContent value="orderqueue" className="space-y-6">
+            {isLoadingQueue ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="ld-ripple">
+                  <div />
+                  <div />
+                </div>
+              </div>
+            ) : orderQueue && orderQueue.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {orderQueue.map(order => (
+                  <Card key={order.id} className="p-4 md:p-5 bg-white hover:shadow-lg transition-shadow">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900">{order.tableLabel}</h3>
+                        <p className="text-xs text-slate-600 mt-1">
+                          <Clock className="w-3 h-3 inline mr-1" />
+                          {new Date(order.submittedAt).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="text-xs font-mono">
+                        #{order.orderNumber?.toString().padStart(3, '0') || order.id}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-1.5 mb-4">
+                      {order.items.map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-900">{item.quantity}× {item.menuItemName}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <Button
+                      onClick={() => markDeliveredMutation.mutate(order.id)}
+                      className="w-full btn-sweep-green gap-2"
+                    >
+                      <CheckCircle className="w-3 h-3" />
+                      Delivered
+                    </Button>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card className="p-8 md:p-12 text-center bg-white">
+                <CheckCircle className="w-10 md:w-12 h-10 md:h-12 text-slate-400 mx-auto mb-4" />
+                <p className="text-slate-600 font-medium">No pending orders</p>
+                <p className="text-sm text-slate-500 mt-2">Orders will appear here when customers place them</p>
+              </Card>
+            )}
+          </TabsContent>
+
           {/* Table Management Tab */}
           <TabsContent value="tables" className="space-y-6">
-            <Card className="p-6 bg-white">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-slate-900">Tables</h2>
+            <Card className="p-4 md:p-6 bg-white">
+              <div className="flex items-center justify-between mb-4 md:mb-6">
+                <h2 className="text-xl md:text-2xl font-bold text-slate-900">Tables</h2>
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button className="gap-2 bg-amber-600 hover:bg-amber-700">
+                    <Button className="gap-2 btn-sweep">
                       <Plus className="w-4 h-4" />
                       New Table
                     </Button>
@@ -847,7 +1159,7 @@ export default function AdminPanel() {
                       />
                       <Button
                         onClick={() => createTableMutation.mutate(newTableLabel)}
-                        className="w-full bg-amber-600 hover:bg-amber-700"
+                        className="w-full btn-sweep"
                       >
                         Create
                       </Button>
@@ -857,14 +1169,16 @@ export default function AdminPanel() {
               </div>
 
               {isTablesLoading ? (
-                <div className="text-center py-12">
-                  <div className="w-10 h-10 rounded-full border-4 border-slate-200 border-t-amber-600 animate-spin mx-auto mb-3"></div>
-                  <p className="text-slate-600 text-sm">Loading tables...</p>
+                <div className="flex items-center justify-center py-16">
+                  <div className="ld-ripple">
+                    <div />
+                    <div />
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {tablesData?.map((table: any) => (
-                    <Card key={table.id} className="p-5 border border-slate-200 flex flex-col bg-white hover:shadow-lg transition-shadow">
+                    <Card key={table.id} className="p-3 md:p-5 border border-slate-200 flex flex-col bg-white hover:shadow-lg transition-shadow">
                       {/* Top row: Label + Status */}
                       <div className="flex items-start justify-between mb-3">
                         <h3 className="text-xl font-bold text-slate-900">{table.label}</h3>
@@ -889,7 +1203,7 @@ export default function AdminPanel() {
                           onClick={() => handleCopyUrl(table.tableCode, table.id)}
                           variant="ghost"
                           size="sm"
-                          className="flex-1 text-xs gap-1.5 text-slate-600 hover:text-amber-600 hover:bg-amber-50"
+                          className="flex-1 text-xs gap-1.5 text-slate-600 hover:text-blue-500 hover:bg-blue-50"
                         >
                           {copiedId === table.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                           {copiedId === table.id ? "Copied" : "Copy URL"}
@@ -898,7 +1212,7 @@ export default function AdminPanel() {
                           onClick={() => handleShowQr(table.tableCode, table.label)}
                           variant="ghost"
                           size="sm"
-                          className="flex-1 text-xs gap-1.5 text-slate-600 hover:text-amber-600 hover:bg-amber-50"
+                          className="flex-1 text-xs gap-1.5 text-slate-600 hover:text-blue-500 hover:bg-blue-50"
                         >
                           <QrCode className="w-3.5 h-3.5" />
                           QR Code
@@ -907,7 +1221,7 @@ export default function AdminPanel() {
                           onClick={() => setEditingTable({ id: table.id, label: table.label })}
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-slate-500 hover:text-amber-600"
+                          className="h-8 w-8 text-slate-500 hover:text-blue-500"
                         >
                           <Pencil className="w-4 h-4" />
                         </Button>
@@ -933,12 +1247,12 @@ export default function AdminPanel() {
 
           {/* Menu Management Tab */}
           <TabsContent value="menu" className="space-y-6">
-            <Card className="p-6 bg-white">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-slate-900">Categories</h2>
+            <Card className="p-4 md:p-6 bg-white">
+              <div className="flex items-center justify-between mb-4 md:mb-6">
+                <h2 className="text-xl md:text-2xl font-bold text-slate-900">Categories</h2>
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button className="gap-2 bg-amber-600 hover:bg-amber-700">
+                    <Button className="gap-2 btn-sweep">
                       <Plus className="w-4 h-4" />
                       New Category
                     </Button>
@@ -955,7 +1269,7 @@ export default function AdminPanel() {
                       />
                       <Button
                         onClick={() => createCategoryMutation.mutate(newCategoryName)}
-                        className="w-full bg-amber-600 hover:bg-amber-700"
+                        className="w-full btn-sweep"
                       >
                         Create
                       </Button>
@@ -978,7 +1292,7 @@ export default function AdminPanel() {
                         onClick={() => setEditingCategory({ id: category.id, name: category.name })}
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-slate-600 hover:text-amber-600"
+                        className="h-8 w-8 text-slate-600 hover:text-blue-500"
                       >
                         <Pencil className="w-4 h-4" />
                       </Button>
@@ -1000,12 +1314,12 @@ export default function AdminPanel() {
               </div>
             </Card>
 
-            <Card className="p-6 bg-white">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-slate-900">Menu Items</h2>
+            <Card className="p-4 md:p-6 bg-white">
+              <div className="flex items-center justify-between mb-4 md:mb-6">
+                <h2 className="text-xl md:text-2xl font-bold text-slate-900">Menu Items</h2>
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button className="gap-2 bg-amber-600 hover:bg-amber-700">
+                    <Button className="gap-2 btn-sweep">
                       <Plus className="w-4 h-4" />
                       New Item
                     </Button>
@@ -1050,7 +1364,7 @@ export default function AdminPanel() {
                             toast.error("Please fill all fields");
                           }
                         }}
-                        className="w-full bg-amber-600 hover:bg-amber-700"
+                        className="w-full btn-sweep"
                       >
                         Create
                       </Button>
@@ -1059,59 +1373,84 @@ export default function AdminPanel() {
                 </Dialog>
               </div>
 
-              <div className="space-y-3">
-                {menuItems?.map((item: any) => (
-                  <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-slate-900">{item.name}</h4>
-                      {item.description && <p className="text-xs text-slate-500 mb-1">{item.description}</p>}
-                      <p className="text-sm text-slate-600">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => setEditingMenuItem({
-                          id: item.id,
-                          name: item.name,
-                          description: item.description || "",
-                          price: typeof item.price === 'string' ? parseFloat(item.price) : item.price,
-                          categoryId: item.categoryId
-                        })}
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-slate-600 hover:text-amber-600"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
-                            deleteMenuItemMutation.mutate(item.id);
-                          }
-                        }}
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
+              <div className="flex gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none">
+                {categories?.filter((c: any) => menuItems?.some((i: any) => i.categoryId === c.id)).map((category: any) => (
+                  <button
+                    key={category.id}
+                    onClick={() => document.getElementById(`admin-cat-${category.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    className="px-4 py-2 rounded-full text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 transition-all whitespace-nowrap"
+                  >
+                    {category.name}
+                  </button>
                 ))}
+              </div>
+
+              <div className="space-y-6">
+                {categories?.map((category: any) => {
+                  const catItems = menuItems?.filter((i: any) => i.categoryId === category.id) || [];
+                  if (catItems.length === 0) return null;
+                  return (
+                    <div key={category.id} id={`admin-cat-${category.id}`} className="scroll-mt-20">
+                      <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">{category.name}</h3>
+                      <div className="space-y-3">
+                        {catItems.map((item: any) => (
+                          <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-slate-900">{item.name}</h4>
+                              {item.description && <p className="text-xs text-slate-500 mb-1">{item.description}</p>}
+                              <p className="text-sm text-slate-600">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={() => setEditingMenuItem({
+                                  id: item.id,
+                                  name: item.name,
+                                  description: item.description || "",
+                                  price: typeof item.price === 'string' ? parseFloat(item.price) : item.price,
+                                  categoryId: item.categoryId
+                                })}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-600 hover:text-blue-500"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
+                                    deleteMenuItemMutation.mutate(item.id);
+                                  }
+                                }}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </Card>
           </TabsContent>
 
           {/* Settings Tab */}
           <TabsContent value="settings" className="space-y-6">
-            <Card className="p-6 bg-white">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
-                <Settings className="w-6 h-6" />
+            <Card className="p-4 md:p-6 bg-white">
+              <h2 className="text-xl md:text-2xl font-bold text-slate-900 mb-4 md:mb-6 flex items-center gap-2">
+                <Settings className="w-5 h-5 md:w-6 md:h-6" />
                 Cafe Settings
               </h2>
               {isLoadingSettings ? (
-                <div className="text-center py-6">
-                  <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-amber-600 animate-spin mx-auto mb-2"></div>
-                  <p className="text-slate-600 text-sm">Loading settings...</p>
+                <div className="flex items-center justify-center py-16">
+                  <div className="ld-ripple">
+                    <div />
+                    <div />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1159,7 +1498,7 @@ export default function AdminPanel() {
                       });
                     }}
                     disabled={updateSettingsMutation.isPending}
-                    className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                    className="w-full btn-sweep font-semibold"
                   >
                     {updateSettingsMutation.isPending ? "Saving..." : "Save Changes"}
                   </Button>
@@ -1167,12 +1506,51 @@ export default function AdminPanel() {
               )}
             </Card>
 
-            {/* Settled Bills */}
-            <Card className="p-6 bg-white">
-              <h2 className="text-2xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-                <Receipt className="w-6 h-6" />
-                Settled Bills
+            {/* Daily Revenue */}
+            <Card className="p-4 md:p-6 bg-white">
+              <h2 className="text-lg md:text-2xl font-bold text-slate-900 flex items-center gap-2 mb-4">
+                <TrendingUp className="w-5 h-5 md:w-6 md:h-6" />
+                Daily Revenue
               </h2>
+              {!settledBills || settledBills.length === 0 ? (
+                <p className="text-slate-500 text-sm">No revenue recorded yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(() => {
+                    const groups: Record<string, typeof settledBills> = {};
+                    for (const bill of settledBills) {
+                      const dateKey = new Date(bill.settledAt).toLocaleDateString();
+                      if (!groups[dateKey]) groups[dateKey] = [];
+                      groups[dateKey].push(bill);
+                    }
+                    return Object.entries(groups)
+                      .sort((a, b) => new Date(b[1][0].settledAt).getTime() - new Date(a[1][0].settledAt).getTime())
+                      .map(([date, bills]) => (
+                        <div key={date} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0 text-sm">
+                          <span className="text-slate-800">{date}</span>
+                          <span className="font-semibold text-blue-500">
+                            ₹{bills.reduce((sum, b) => sum + (b.finalTotal || 0), 0).toFixed(2)}
+                          </span>
+                        </div>
+                      ));
+                  })()}
+                </div>
+              )}
+            </Card>
+
+            {/* Settled Bills */}
+            <Card className="p-4 md:p-6 bg-white">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg md:text-2xl font-bold text-slate-900 flex items-center gap-2">
+                  <Receipt className="w-5 h-5 md:w-6 md:h-6" />
+                  Settled Bills
+                </h2>
+                {settledBills && settledBills.length > 0 && (
+                  <span className="text-sm md:text-lg font-bold text-blue-500">
+                    Total: ₹{settledBills.reduce((sum, bill) => sum + (bill.finalTotal || 0), 0).toFixed(2)}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500 mb-4">Bills are automatically deleted after 1 year.</p>
               {!settledBills || settledBills.length === 0 ? (
                 <p className="text-slate-500 text-sm">No settled bills yet.</p>
@@ -1187,7 +1565,12 @@ export default function AdminPanel() {
                     }
                     return Object.entries(groups).map(([date, bills]) => (
                       <div key={date} className="mb-6">
-                        <h3 className="text-lg font-semibold text-slate-800 mb-3 border-b border-slate-200 pb-2">{date}</h3>
+                        <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                          <h3 className="text-lg font-semibold text-slate-800">{date}</h3>
+                          <span className="text-sm font-bold text-blue-500">
+                            ₹{bills.reduce((sum, b) => sum + (b.finalTotal || 0), 0).toFixed(2)}
+                          </span>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                           {bills.map(bill => (
                             <Card key={bill.id} className="p-4 border border-slate-200">
@@ -1220,7 +1603,7 @@ export default function AdminPanel() {
                                 </div>
                                 <div className="flex justify-between font-semibold border-t border-slate-200 pt-1 mt-1">
                                   <span className="text-slate-700">Total</span>
-                                  <span className="text-amber-600">₹{bill.finalTotal.toFixed(2)}</span>
+                                  <span className="text-blue-500">₹{bill.finalTotal.toFixed(2)}</span>
                                 </div>
                               </div>
                             </Card>
@@ -1251,7 +1634,7 @@ export default function AdminPanel() {
               />
               <Button
                 onClick={() => updateTableMutation.mutate({ id: editingTable.id, label: editingTable.label })}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                className="w-full btn-sweep"
               >
                 Save Changes
               </Button>
@@ -1275,7 +1658,7 @@ export default function AdminPanel() {
               />
               <Button
                 onClick={() => updateCategoryMutation.mutate({ id: editingCategory.id, name: editingCategory.name })}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                className="w-full btn-sweep"
               >
                 Save Changes
               </Button>
@@ -1327,7 +1710,7 @@ export default function AdminPanel() {
                     toast.error("Please fill all fields");
                   }
                 }}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+                className="w-full btn-sweep"
               >
                 Save Changes
               </Button>
@@ -1354,7 +1737,7 @@ export default function AdminPanel() {
               </p>
               <Button
                 onClick={() => handleCopyUrl(qrTable.tableCode, -1)}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-2"
+                className="w-full btn-sweep gap-2"
               >
                 {copiedId === -1 ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                 {copiedId === -1 ? "Copied!" : "Copy URL"}
@@ -1363,6 +1746,10 @@ export default function AdminPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      <div className="mt-16">
+        <Footer variant="admin" />
+      </div>
     </div>
   );
 }
