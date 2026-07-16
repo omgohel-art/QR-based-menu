@@ -16,10 +16,19 @@ function getSupabase() {
   return _supabase;
 }
 
-const razorpay = new Razorpay({
-  key_id: RAZORPAY_KEY_ID,
-  key_secret: RAZORPAY_KEY_SECRET,
-});
+let _razorpay: Razorpay | null = null;
+function getRazorpay() {
+  if (!_razorpay) {
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      throw new Error("Razorpay credentials not configured");
+    }
+    _razorpay = new Razorpay({
+      key_id: RAZORPAY_KEY_ID,
+      key_secret: RAZORPAY_KEY_SECRET,
+    });
+  }
+  return _razorpay;
+}
 
 const router = Router();
 
@@ -37,7 +46,7 @@ router.post("/api/payment/create-order", async (req, res) => {
       receipt: receipt || `receipt_${Date.now()}`,
     };
 
-    const order = await razorpay.orders.create(options);
+    const order = await getRazorpay().orders.create(options);
 
     return res.json({
       razorpayOrderId: order.id,
