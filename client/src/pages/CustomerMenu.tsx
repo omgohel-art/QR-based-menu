@@ -5,14 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Minus, ShoppingBag, UtensilsCrossed } from "lucide-react";
+import { Search, Plus, Minus, ShoppingBag, UtensilsCrossed, ImageOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Footer from "@/components/marketing/Footer";
 import "@/components/LoadingRipple.css";
 
 function formatPrice(price: number | string) {
   const n = (typeof price === "string" ? parseFloat(price) : price).toFixed(2);
-  return { symbol: "₹", value: n };
+  return { symbol: "\u20B9", value: n };
 }
 
 export default function CustomerMenu() {
@@ -33,7 +33,7 @@ export default function CustomerMenu() {
     queryFn: async () => {
       const [categoriesRes, itemsRes] = await Promise.all([
         supabase.from("categories").select("*").order("displayOrder"),
-        supabase.from("menuItems").select("*").eq("isAvailable", true).order("displayOrder"),
+        supabase.from("menuItems").select("*").eq("isAvailable", true).order("name"),
       ]);
       return {
         categories: categoriesRes.data || [],
@@ -153,7 +153,7 @@ export default function CustomerMenu() {
 
   if (!initialLoaded) {
     return (
-      <div className="min-h-screen bg-menu-bg flex items-center justify-center">
+      <div className="min-h-screen bg-[#F8F4EC] flex items-center justify-center">
         <div className="ld-ripple">
           <div />
           <div />
@@ -164,14 +164,14 @@ export default function CustomerMenu() {
 
   if (!menu || !session?.session) {
     return (
-      <div className="min-h-screen bg-menu-bg flex items-center justify-center px-4">
+      <div className="min-h-screen bg-[#F8F4EC] flex items-center justify-center px-4">
         <div className="text-center max-w-sm space-y-6">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-red-50 flex items-center justify-center">
-            <UtensilsCrossed className="w-6 h-6 text-red-400" />
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#4A3428]/10 flex items-center justify-center">
+            <UtensilsCrossed className="w-6 h-6 text-[#4A3428]" />
           </div>
           <div>
-            <p className="text-lg font-semibold text-menu-primary mb-1">Unable to load table</p>
-            <p className="text-sm text-menu-muted">Please scan the QR code again</p>
+            <p className="text-lg font-semibold text-[#4A3428] mb-1">Unable to load table</p>
+            <p className="text-sm text-[#8B7E72]">Please scan the QR code again</p>
           </div>
           <Button onClick={() => window.location.reload()} variant="outline" className="rounded-xl">
             Try Again
@@ -182,18 +182,18 @@ export default function CustomerMenu() {
   }
 
   return (
-    <div className="min-h-screen bg-menu-bg pb-32">
+    <div className="min-h-screen bg-[#F8F4EC] pb-32">
       {/* Header */}
-      <div className="sticky top-0 z-40 bg-menu-bg/90 backdrop-blur-lg border-b border-menu-border/60">
+      <div className="sticky top-0 z-40 bg-[#F8F4EC]/90 backdrop-blur-lg border-b border-[#E8E0D4]/60">
         <div className="px-4 py-5">
           <div className="flex items-center justify-between">
-            <h1 className="text-[32px] font-bold text-menu-primary tracking-tight">Menu</h1>
+            <h1 className="text-[32px] font-bold text-[#4A3428] tracking-tight">Menu</h1>
             <div className="flex items-center gap-4">
-              <span className="text-xs text-menu-muted">Table total</span>
-              <span className="text-xl font-bold text-menu-primary">
+              <span className="text-xs text-[#8B7E72]">Table total</span>
+              <span className="text-xl font-bold text-[#4A3428]">
                 {(() => {
                   const p = formatPrice(session.session.subtotal.toString());
-                  return <><span className="text-menu-muted/70 text-base">{p.symbol}</span>{p.value}</>;
+                  return <><span className="text-[#8B7E72]/70 text-base">{p.symbol}</span>{p.value}</>;
                 })()}
               </span>
             </div>
@@ -204,19 +204,19 @@ export default function CustomerMenu() {
       {/* Search */}
       <div className="px-4 pt-6 pb-4">
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-menu-muted pointer-events-none" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8B7E72] pointer-events-none" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search dishes…"
-            className="w-full h-11 pl-10 pr-4 rounded-[12px] bg-white border border-menu-border/60 text-sm text-menu-primary placeholder:text-menu-muted/50 focus:outline-none focus:ring-2 focus:ring-menu-accent/15 focus:border-menu-accent/40 transition-all shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
+            placeholder="Search dishes&hellip;"
+            className="w-full h-11 pl-10 pr-4 rounded-[12px] bg-white border border-[#E8E0D4]/60 text-sm text-[#4A3428] placeholder:text-[#8B7E72]/50 focus:outline-none focus:ring-2 focus:ring-[#C08A4D]/15 focus:border-[#C08A4D]/40 transition-all shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
           />
         </div>
       </div>
 
       {/* Sticky Category Nav */}
       {!search && groupedItems.length > 0 && (
-        <div className="sticky top-[76px] z-30 bg-menu-bg/90 backdrop-blur-lg border-b border-menu-border/40">
+        <div className="sticky top-[76px] z-30 bg-[#F8F4EC]/90 backdrop-blur-lg border-b border-[#E8E0D4]/40">
           <div className="px-4 py-3 overflow-x-auto scrollbar-none">
             <div className="flex gap-2 w-max">
               {groupedItems.map((g) => (
@@ -227,8 +227,8 @@ export default function CustomerMenu() {
                   className={cn(
                     "px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 whitespace-nowrap",
                     activeCategoryId === g.category!.id
-                      ? "bg-transparent text-black border-[#ffdb70] border-2 font-bold"
-                      : "bg-white text-black border-[#ffdb70]/50 hover:border-[#ffdb70]"
+                      ? "bg-[#C08A4D] text-white border-[#C08A4D] font-semibold"
+                      : "bg-white text-[#4A3428] border-[#C08A4D]/40 hover:border-[#C08A4D]"
                   )}
                 >
                   {g.category!.name}
@@ -240,16 +240,15 @@ export default function CustomerMenu() {
       )}
 
       {/* Category Sections */}
-      <div ref={scrollContainerRef} className="px-4 pt-6 space-y-8">
+      <div ref={scrollContainerRef} className="px-4 pt-5 space-y-7">
         {search ? (
-          // Search results — flat list
-          <div className="space-y-5">
+          <div className="space-y-3">
             {groupedItems[0]?.items.length === 0 ? (
               <div className="text-center py-16 space-y-4">
-                <div className="w-14 h-14 mx-auto rounded-2xl bg-menu-border/20 flex items-center justify-center">
-                  <Search className="w-6 h-6 text-menu-muted/50" />
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-[#E8E0D4]/30 flex items-center justify-center">
+                  <Search className="w-6 h-6 text-[#8B7E72]/50" />
                 </div>
-                <p className="text-menu-muted text-sm">No dishes found</p>
+                <p className="text-[#8B7E72] text-sm">No dishes found</p>
               </div>
             ) : (
               <AnimatePresence mode="popLayout">
@@ -267,10 +266,10 @@ export default function CustomerMenu() {
               ref={(el) => { if (el) categoryRefs.current.set(g.category!.id, el); }}
               className="scroll-mt-[140px]"
             >
-              <div className="bg-[#ffdb70] text-slate-800 px-4 py-2 rounded-lg mb-4 inline-block">
+              <div className="bg-[#C08A4D] text-white px-4 py-2 rounded-lg mb-4 inline-block">
                 <h2 className="text-lg font-bold">{g.category!.name}</h2>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <AnimatePresence mode="popLayout">
                   {g.items.map((item) => (
                     <MenuItem key={item.id} item={item} qty={getItemQuantity(item.id)} formatPrice={formatPrice} onAdd={addToCart} onUpdateQty={updateQuantity} />
@@ -297,7 +296,7 @@ export default function CustomerMenu() {
                 whileTap={{ scale: 0.97 }}
                 transition={{ duration: 0.1, ease: "easeIn" }}
                 onClick={() => navigate(`/table/${tableCode}/cart`)}
-                className="w-full bg-menu-primary text-white rounded-[24px] py-[15px] px-5 flex items-center justify-between shadow-[0_4px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl bg-menu-primary/98"
+                className="w-full bg-[#4A3428] text-white rounded-[24px] py-[15px] px-5 flex items-center justify-between shadow-[0_4px_24px_rgba(74,52,40,0.15)]"
               >
                 <div className="flex items-center gap-2.5">
                   <ShoppingBag className="w-5 h-5" />
@@ -308,7 +307,7 @@ export default function CustomerMenu() {
                   <span className="text-lg font-bold">
                     {(() => {
                       const t = cart.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2);
-                      return <><span className="text-white/60 font-medium">₹</span>{t}</>;
+                      return <><span className="text-white/60 font-medium">{"\u20B9"}</span>{t}</>;
                     })()}
                   </span>
                 </div>
@@ -333,58 +332,75 @@ function MenuItem({ item, qty, formatPrice, onAdd, onUpdateQty }: {
   onUpdateQty: (id: number, qty: number) => void;
 }) {
   const { symbol, value } = formatPrice(item.price);
+  const hasImage = !!item.imageUrl;
+
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
-      <div className="bg-white rounded-[20px] border border-menu-border/60 shadow-[0_2px_20px_rgba(0,0,0,0.04)] overflow-hidden">
-        <div className="p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <h3 className="text-lg font-semibold text-slate-800">{item.name}</h3>
-              {item.description && (
-                <p className="text-sm text-menu-muted mt-1 leading-relaxed line-clamp-2">{item.description}</p>
-              )}
-              <p className="mt-3 text-lg font-bold text-menu-primary">
-                <span className="text-menu-muted/60 font-medium">{symbol}</span>{value}
-              </p>
-            </div>
-            {qty === 0 ? (
-              <motion.button
-                whileTap={{ scale: 0.93 }}
-                transition={{ duration: 0.1, ease: "easeIn" }}
-                onClick={() => onAdd(item)}
-                className="shrink-0 w-10 h-10 rounded-[12px] bg-orange-500 text-white flex items-center justify-center hover:bg-orange-600 transition-colors"
-              >
-                <Plus className="w-5 h-5" />
-              </motion.button>
-            ) : (
-              <div className="shrink-0 flex items-center gap-1 bg-menu-bg border border-menu-border/60 rounded-[12px] px-1 py-0.5">
-                <motion.button
-                  whileTap={{ scale: 0.93 }}
-                  transition={{ duration: 0.1, ease: "easeIn" }}
-                  onClick={() => onUpdateQty(item.id, qty - 1)}
-                  className="w-8 h-8 flex items-center justify-center rounded-[8px] text-menu-muted hover:text-menu-primary hover:bg-menu-border/30 transition-colors"
-                >
-                  <Minus className="w-4 h-4" />
-                </motion.button>
-                <span className="min-w-[22px] text-center text-sm font-semibold text-menu-primary">{qty}</span>
-                <motion.button
-                  whileTap={{ scale: 0.93 }}
-                  transition={{ duration: 0.1, ease: "easeIn" }}
-                  onClick={() => onUpdateQty(item.id, qty + 1)}
-                  className="w-8 h-8 flex items-center justify-center rounded-[8px] text-menu-muted hover:text-menu-primary hover:bg-menu-border/30 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                </motion.button>
-              </div>
-            )}
+      <div className="bg-white rounded-[16px] border border-[#E8E0D4]/60 shadow-[0_1px_8px_rgba(0,0,0,0.04)] p-3 flex items-center gap-3">
+        {/* Thumbnail */}
+        {hasImage ? (
+          <div className="w-[72px] h-[72px] rounded-[12px] overflow-hidden bg-[#F8F4EC] shrink-0">
+            <img
+              src={item.imageUrl}
+              alt={item.name}
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
           </div>
+        ) : (
+          <div className="w-[72px] h-[72px] rounded-[12px] bg-[#F8F4EC] flex items-center justify-center shrink-0">
+            <ImageOff className="w-5 h-5 text-[#C08A4D]/30" />
+          </div>
+        )}
+
+        {/* Info */}
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[15px] font-semibold text-[#4A3428] leading-snug">{item.name}</h3>
+          {item.description && (
+            <p className="text-xs text-[#8B7E72] mt-0.5 leading-snug line-clamp-2">{item.description}</p>
+          )}
+          <p className="mt-1.5 text-[15px] font-bold text-[#C08A4D]">
+            <span className="text-[#8B7E72]/50 font-medium text-xs">{symbol}</span>{value}
+          </p>
         </div>
+
+        {/* Add / Quantity */}
+        {qty === 0 ? (
+          <motion.button
+            whileTap={{ scale: 0.93 }}
+            transition={{ duration: 0.1, ease: "easeIn" }}
+            onClick={() => onAdd(item)}
+            className="shrink-0 h-9 px-4 rounded-[10px] bg-white border border-[#C08A4D] text-[#C08A4D] text-sm font-semibold flex items-center justify-center hover:bg-[#C08A4D] hover:text-white transition-all"
+          >
+            Add
+          </motion.button>
+        ) : (
+          <div className="shrink-0 flex items-center gap-0.5 bg-[#F8F4EC] border border-[#E8E0D4]/60 rounded-[10px] px-0.5 py-0.5">
+            <motion.button
+              whileTap={{ scale: 0.93 }}
+              transition={{ duration: 0.1, ease: "easeIn" }}
+              onClick={() => onUpdateQty(item.id, qty - 1)}
+              className="w-8 h-8 flex items-center justify-center rounded-[8px] text-[#8B7E72] hover:text-[#4A3428] hover:bg-[#E8E0D4]/40 transition-colors"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </motion.button>
+            <span className="min-w-[20px] text-center text-sm font-semibold text-[#4A3428]">{qty}</span>
+            <motion.button
+              whileTap={{ scale: 0.93 }}
+              transition={{ duration: 0.1, ease: "easeIn" }}
+              onClick={() => onUpdateQty(item.id, qty + 1)}
+              className="w-8 h-8 flex items-center justify-center rounded-[8px] text-[#8B7E72] hover:text-[#4A3428] hover:bg-[#E8E0D4]/40 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </motion.button>
+          </div>
+        )}
       </div>
     </motion.div>
   );

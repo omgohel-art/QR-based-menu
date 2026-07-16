@@ -5,10 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Minus, Plus, ShoppingBag, Trash2, Send, UtensilsCrossed } from "lucide-react";
+import { ArrowLeft, Minus, Plus, ShoppingBag, Trash2, Send, UtensilsCrossed, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
 import Footer from "@/components/marketing/Footer";
+import PaymentModal from "@/components/PaymentModal";
 
 export default function CartPage() {
   const [, params] = useRoute("/table/:tableCode/cart");
@@ -18,6 +19,7 @@ export default function CartPage() {
   const { cart, cartTotal, cartItemCount, updateQuantity, removeFromCart, clearCart } = useCart();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deviceToken] = useState(() => nanoid(16));
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   const { data: session } = useQuery({
     queryKey: ["cartSession", tableCode],
@@ -65,14 +67,14 @@ export default function CartPage() {
   const { data: menu } = useQuery({
     queryKey: ["cartMenu", tableCode],
     queryFn: async () => {
-      const { data } = await supabase.from("menuItems").select("*").eq("isAvailable", true);
+      const { data } = await supabase.from("menuItems").select("*").eq("isAvailable", true).order("name");
       return { items: data || [] };
     },
   });
 
   const submitOrderMutation = useMutation({
     mutationFn: async (payload: any) => {
-      const { tableCode, items, submissionId, deviceToken } = payload;
+      const { tableCode, items, submissionId, deviceToken, paymentMethod, paymentStatus } = payload;
 
       const { data: tableData } = await supabase.from("tables").select("*").eq("tableCode", tableCode).single();
       if (!tableData) throw new Error("Table not found");
@@ -106,6 +108,8 @@ export default function CartPage() {
         deviceToken,
       };
       if (orderNumber !== null) insertPayload.orderNumber = orderNumber;
+      if (paymentMethod) insertPayload.paymentMethod = paymentMethod;
+      if (paymentStatus) insertPayload.paymentStatus = paymentStatus;
 
       const { data: newOrder, error: orderError } = await supabase.from("orders").insert(insertPayload).select().single();
 
@@ -151,11 +155,33 @@ export default function CartPage() {
     },
   });
 
-  const handleSubmitOrder = async () => {
+  const handleSubmitOrder = async (payMethod: "counter" | "online") => {
     if (cart.length === 0) {
       toast.error("Your cart is empty");
       return;
     }
+
+    if (payMethod === "online") {
+      const paymentState = {
+        tableCode: tableCode || "",
+        items: cart.map((item) => ({
+          menuItemId: item.menuItemId,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+        subtotal: cartTotal,
+        serviceCharge: serviceCharge,
+        taxAmount: taxAmount,
+        finalTotal: finalTotal,
+        serviceChargePercentage: settings?.serviceChargePercentage || 0,
+        taxPercentage: settings?.taxPercentage || 0,
+      };
+      sessionStorage.setItem("paymentState", JSON.stringify(paymentState));
+      navigate(`/table/${tableCode}/payment`);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await submitOrderMutation.mutateAsync({
@@ -166,6 +192,8 @@ export default function CartPage() {
         })),
         submissionId: nanoid(),
         deviceToken,
+        paymentMethod: "counter",
+        paymentStatus: "pending",
       });
     } finally {
       setIsSubmitting(false);
@@ -344,9 +372,9 @@ export default function CartPage() {
               <motion.button
                 whileTap={{ scale: 0.97 }}
                 transition={{ duration: 0.1, ease: "easeIn" }}
-                onClick={handleSubmitOrder}
+                onClick={() => setShowPaymentModal(true)}
                 disabled={isSubmitting || cart.length === 0}
-                className="w-full bg-menu-accent hover:bg-menu-accent/90 disabled:bg-menu-accent/40 disabled:cursor-not-allowed text-white rounded-[16px] py-[15px] px-5 flex items-center justify-center gap-2 font-semibold text-base transition-colors shadow-[0_2px_12px_rgba(245,158,11,0.2)]"
+                className="w-full bg-menu-accent hover:bg-menu-accent/90 disabled:bg-menu-accent/40 disabled:cursor-not-allowed text-white rounded-[16px] py-[15px] px-5 flex items-center justify-center gap-2 font-semibold text-base transition-colors shadow-[0_2px_12px_rgba(192,138,77,0.25)]"
               >
                 {isSubmitting ? (
                   <span className="flex items-center gap-2">
@@ -355,7 +383,7 @@ export default function CartPage() {
                   </span>
                 ) : (
                   <>
-                    <Send className="w-4 h-4" />
+                    <CreditCard className="w-4 h-4" />
                     Place Order
                   </>
                 )}
@@ -372,6 +400,20 @@ export default function CartPage() {
           </>
         )}
       </div>
+
+      <PaymentModal
+        open={showPaymentModal}
+        onClose={() => setShowPaymentModal(false)}
+        onSelectPayOnline={() => {
+          setShowPaymentModal(false);
+          handleSubmitOrder("online");
+        }}
+        onSelectPayAtCounter={() => {
+          setShowPaymentModal(false);
+          handleSubmitOrder("counter");
+        }}
+        finalTotal={finalTotal}
+      />
 
       <div className="mt-16">
         <Footer variant="menu" />

@@ -1,22 +1,38 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
+
+function toLocalDateStr(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import ImageUpload from "@/components/ImageUpload";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Settings, Clock, Users, TrendingUp, RefreshCw, Bell, Pencil, QrCode, Copy, Check, Receipt, AlertTriangle, CheckCircle } from "lucide-react";
+import { Plus, Trash2, Settings, Clock, Users, TrendingUp, RefreshCw, Bell, Pencil, QrCode, Copy, Check, Receipt, AlertTriangle, CheckCircle, LogOut, Eye, EyeOff, Shield } from "lucide-react";
 import QRCode from 'qrcode';
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
 import Footer from "@/components/marketing/Footer";
+import DateRangePicker from "@/components/DateRangePicker";
 import "@/components/LoadingRipple.css";
 
 export default function AdminPanel() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("orders");
+  const [, navigate] = useLocation();
+  const { logout } = useAuth();
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem("kitchenMode") === "true" ? "orderqueue" : "orders";
+  });
+  const isKitchenMode = localStorage.getItem("kitchenMode") === "true";
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newTableLabel, setNewTableLabel] = useState("");
   const [newItemData, setNewItemData] = useState({
@@ -24,6 +40,7 @@ export default function AdminPanel() {
     name: "",
     description: "",
     price: 0,
+    imageUrl: null as string | null,
   });
 
   // Orders State
@@ -35,7 +52,19 @@ export default function AdminPanel() {
   // Edit States
   const [editingTable, setEditingTable] = useState<{ id: number; label: string } | null>(null);
   const [editingCategory, setEditingCategory] = useState<{ id: number; name: string } | null>(null);
-  const [editingMenuItem, setEditingMenuItem] = useState<{ id: number; name: string; description: string; price: number; categoryId: number } | null>(null);
+  const [editingMenuItem, setEditingMenuItem] = useState<{ id: number; name: string; description: string; price: number; categoryId: number; imageUrl: string | null } | null>(null);
+
+  // Change Password State
+  const [cpCurrent, setCpCurrent] = useState("");
+  const [cpNew, setCpNew] = useState("");
+  const [cpConfirm, setCpConfirm] = useState("");
+  const [cpShow, setCpShow] = useState(false);
+  const [cpSubmitting, setCpSubmitting] = useState(false);
+  const [cpError, setCpError] = useState("");
+  const [cpSuccess, setCpSuccess] = useState("");
+
+  // Settled Bills Date Filter
+  const [selectedDate, setSelectedDate] = useState(() => toLocalDateStr(new Date()));
 
   // QR / Seed States
   const seedingRef = useRef(false);
@@ -69,7 +98,7 @@ export default function AdminPanel() {
   const { data: menuItems } = useQuery({
     queryKey: ['menuItems'],
     queryFn: async () => {
-      const { data } = await supabase.from('menuItems').select('*');
+      const { data } = await supabase.from('menuItems').select('*').order('name');
       return data || [];
     }
   });
@@ -289,6 +318,8 @@ export default function AdminPanel() {
           orderNumber: number | null;
           submittedAt: string;
           status: string;
+          paymentMethod: string | null;
+          paymentStatus: string;
           subtotal: number;
           itemCount: number;
           items: Array<{
@@ -332,6 +363,8 @@ export default function AdminPanel() {
             orderNumber: order.orderNumber,
             submittedAt: order.submittedAt,
             status: order.status || 'pending',
+            paymentMethod: order.paymentMethod || null,
+            paymentStatus: order.paymentStatus || 'pending',
             subtotal,
             itemCount,
             items,
@@ -476,18 +509,20 @@ export default function AdminPanel() {
 
   const createMenuItemMutation = useMutation({
     mutationFn: async (item: any) => {
-      const { error } = await supabase.from('menuItems').insert({
+      const payload: any = {
         categoryId: item.categoryId,
         name: item.name,
         description: item.description,
         price: item.price,
         isAvailable: true,
         displayOrder: 0
-      });
+      };
+      if (item.imageUrl) payload.imageUrl = item.imageUrl;
+      const { error } = await supabase.from('menuItems').insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
-      setNewItemData({ categoryId: 0, name: "", description: "", price: 0 });
+      setNewItemData({ categoryId: 0, name: "", description: "", price: 0, imageUrl: null });
       queryClient.invalidateQueries({ queryKey: ['menuItems'] });
       toast.success("Menu item created");
     },
@@ -496,12 +531,14 @@ export default function AdminPanel() {
 
   const updateMenuItemMutation = useMutation({
     mutationFn: async (item: any) => {
-      const { error } = await supabase.from('menuItems').update({
+      const payload: any = {
         categoryId: item.categoryId,
         name: item.name,
         description: item.description,
         price: item.price
-      }).eq('id', item.id);
+      };
+      if (item.imageUrl !== undefined) payload.imageUrl = item.imageUrl;
+      const { error } = await supabase.from('menuItems').update(payload).eq('id', item.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -682,6 +719,8 @@ export default function AdminPanel() {
             orderNumber: order.orderNumber,
             tableLabel: tableLabelMap.get(session.tableId) || 'Unknown',
             submittedAt: order.submittedAt,
+            paymentMethod: order.paymentMethod || null,
+            paymentStatus: order.paymentStatus || 'pending',
             items,
           });
         }
@@ -778,14 +817,20 @@ export default function AdminPanel() {
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl md:text-3xl font-bold text-slate-900">Admin Panel</h1>
-              <p className="text-xs md:text-sm text-slate-600 mt-1">Manage cafe operations</p>
+              <h1 className="text-xl md:text-3xl font-bold text-slate-900">{isKitchenMode ? "Kitchen Panel" : "Admin Panel"}</h1>
+              <p className="text-xs md:text-sm text-slate-600 mt-1">{isKitchenMode ? "View incoming orders" : "Manage cafe operations"}</p>
             </div>
-            {activeTab === 'orders' && (
+            {!isKitchenMode && activeTab === 'orders' && (
               <Button onClick={() => refetchOrders()} variant="outline" size="sm" className="gap-2">
                 <RefreshCw className="w-4 h-4" />
                 <span className="hidden sm:inline">Refresh Orders</span>
                 <span className="sm:hidden">Refresh</span>
+              </Button>
+            )}
+            {isKitchenMode && (
+              <Button onClick={async () => { localStorage.removeItem("kitchenMode"); await logout(); navigate("/login", { replace: true }); }} variant="outline" size="sm" className="gap-2 text-red-500 border-red-200 hover:bg-red-50">
+                <LogOut className="w-4 h-4" />
+                Logout
               </Button>
             )}
           </div>
@@ -796,11 +841,11 @@ export default function AdminPanel() {
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="flex w-full overflow-x-auto mb-6 md:mb-8 bg-white border border-slate-200">
-            <TabsTrigger value="orders" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Orders</TabsTrigger>
+            {!isKitchenMode && <TabsTrigger value="orders" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Orders</TabsTrigger>}
             <TabsTrigger value="orderqueue" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Order Queue</TabsTrigger>
-            <TabsTrigger value="tables" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Tables</TabsTrigger>
-            <TabsTrigger value="menu" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Menu</TabsTrigger>
-            <TabsTrigger value="settings" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Settings</TabsTrigger>
+            {!isKitchenMode && <TabsTrigger value="tables" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Tables</TabsTrigger>}
+            {!isKitchenMode && <TabsTrigger value="menu" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Menu</TabsTrigger>}
+            {!isKitchenMode && <TabsTrigger value="settings" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Settings</TabsTrigger>}
           </TabsList>
 
           {/* Orders Tab */}
@@ -832,11 +877,11 @@ export default function AdminPanel() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-slate-600 mb-1">Total Revenue</p>
-                    <p className="text-2xl md:text-3xl font-bold text-blue-500">
+                    <p className="text-2xl md:text-3xl font-bold text-green-500">
                       ₹{(todayRevenue || 0).toFixed(2)}
                     </p>
                   </div>
-                  <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-blue-400 opacity-20" />
+                  <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-green-400 opacity-20" />
                 </div>
               </Card>
             </div>
@@ -874,6 +919,19 @@ export default function AdminPanel() {
                             Payment pending
                           </Badge>
                         )}
+                        {table.orders.map((o: any) => (
+                          <div key={o.id} className="flex flex-wrap items-center gap-1 justify-end">
+                            {o.status === 'delivered' && (
+                              <Badge className="text-xs bg-green-600">Served</Badge>
+                            )}
+                            {o.status === 'pending' && (
+                              <Badge variant="outline" className="text-xs bg-yellow-50 border-yellow-300 text-yellow-700">Pending</Badge>
+                            )}
+                            {o.paymentMethod && (
+                              <span className="text-[10px] text-slate-400 uppercase">{o.paymentMethod}</span>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
 
@@ -939,7 +997,7 @@ export default function AdminPanel() {
                       )}
                       <div className="flex items-center justify-between border-t border-slate-200 pt-2">
                         <span className="text-sm font-semibold text-slate-700">Total</span>
-                        <span className="text-lg font-bold text-blue-500">₹{table.finalTotal.toFixed(2)}</span>
+                        <span className="text-lg font-bold text-green-500">₹{table.finalTotal.toFixed(2)}</span>
                       </div>
                     </div>
 
@@ -1030,7 +1088,7 @@ export default function AdminPanel() {
                         </div>
                         <div className="col-span-2">
                           <p className="text-slate-600">Final Total</p>
-                          <p className="font-semibold text-blue-500 text-lg">
+                          <p className="font-semibold text-green-500 text-lg">
                             ₹{sessionDetails.session?.computedFinalTotal.toFixed(2)}
                           </p>
                         </div>
@@ -1045,12 +1103,21 @@ export default function AdminPanel() {
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-slate-900">#{order.orderNumber?.toString().padStart(3, '0') || order.id}</span>
-                                <Badge
-                                  variant={order.status === 'settled' ? 'default' : 'secondary'}
-                                  className={order.status === 'settled' ? 'bg-green-600' : 'bg-blue-400'}
-                                >
-                                  {order.status === 'settled' ? 'Paid' : 'Pending'}
-                                </Badge>
+                                {order.status === 'delivered' && (
+                                  <Badge className="text-xs bg-green-600">Served</Badge>
+                                )}
+                                {order.status === 'pending' && (
+                                  <Badge variant="outline" className="text-xs bg-yellow-50 border-yellow-300 text-yellow-700">Pending</Badge>
+                                )}
+                                {order.status === 'settled' && (
+                                  <Badge className="text-xs bg-green-600">Paid</Badge>
+                                )}
+                                {order.paymentStatus === 'paid' && (
+                                  <Badge className="text-xs bg-blue-600">Online</Badge>
+                                )}
+                                {order.paymentStatus === 'pending' && order.paymentMethod === 'counter' && (
+                                  <Badge variant="outline" className="text-xs bg-slate-50 border-slate-300 text-slate-600">Counter</Badge>
+                                )}
                               </div>
                               <span className="text-xs text-slate-500">{new Date(order.submittedAt).toLocaleTimeString()}</span>
                             </div>
@@ -1356,6 +1423,10 @@ export default function AdminPanel() {
                         value={newItemData.price}
                         onChange={(e) => setNewItemData({ ...newItemData, price: parseFloat(e.target.value) })}
                       />
+                      <ImageUpload
+                        currentImageUrl={newItemData.imageUrl}
+                        onImageChange={(url) => setNewItemData({ ...newItemData, imageUrl: url })}
+                      />
                       <Button
                         onClick={() => {
                           if (newItemData.categoryId && newItemData.name && newItemData.price > 0) {
@@ -1395,10 +1466,19 @@ export default function AdminPanel() {
                       <div className="space-y-3">
                         {catItems.map((item: any) => (
                           <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
-                            <div className="flex-1">
-                              <h4 className="font-semibold text-slate-900">{item.name}</h4>
-                              {item.description && <p className="text-xs text-slate-500 mb-1">{item.description}</p>}
-                              <p className="text-sm text-slate-600">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
+                            <div className="flex items-center gap-3 flex-1">
+                              {item.imageUrl ? (
+                                <img src={item.imageUrl} alt={item.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
+                                  <span className="text-xs text-slate-400">No img</span>
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <h4 className="font-semibold text-slate-900 truncate">{item.name}</h4>
+                                {item.description && <p className="text-xs text-slate-500 truncate">{item.description}</p>}
+                                <p className="text-sm text-slate-600">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
+                              </div>
                             </div>
                             <div className="flex gap-2">
                               <Button
@@ -1407,7 +1487,8 @@ export default function AdminPanel() {
                                   name: item.name,
                                   description: item.description || "",
                                   price: typeof item.price === 'string' ? parseFloat(item.price) : item.price,
-                                  categoryId: item.categoryId
+                                  categoryId: item.categoryId,
+                                  imageUrl: item.imageUrl || null
                                 })}
                                 variant="ghost"
                                 size="icon"
@@ -1528,7 +1609,7 @@ export default function AdminPanel() {
                       .map(([date, bills]) => (
                         <div key={date} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0 text-sm">
                           <span className="text-slate-800">{date}</span>
-                          <span className="font-semibold text-blue-500">
+                          <span className="font-semibold text-green-500">
                             ₹{bills.reduce((sum, b) => sum + (b.finalTotal || 0), 0).toFixed(2)}
                           </span>
                         </div>
@@ -1546,74 +1627,191 @@ export default function AdminPanel() {
                   Settled Bills
                 </h2>
                 {settledBills && settledBills.length > 0 && (
-                  <span className="text-sm md:text-lg font-bold text-blue-500">
-                    Total: ₹{settledBills.reduce((sum, bill) => sum + (bill.finalTotal || 0), 0).toFixed(2)}
+                  <span className="text-sm md:text-lg font-bold text-green-500">
+                    Total: ₹{settledBills
+                      .filter((bill) => toLocalDateStr(new Date(bill.settledAt)) === selectedDate)
+                      .reduce((sum, bill) => sum + (bill.finalTotal || 0), 0)
+                      .toFixed(2)}
                   </span>
                 )}
               </div>
+              <div className="flex items-center gap-3 mb-4">
+                <DateRangePicker
+                  value={selectedDate}
+                  onChange={setSelectedDate}
+                />
+              </div>
               <p className="text-xs text-slate-500 mb-4">Bills are automatically deleted after 1 year.</p>
-              {!settledBills || settledBills.length === 0 ? (
-                <p className="text-slate-500 text-sm">No settled bills yet.</p>
-              ) : (
-                <>
-                  {(() => {
-                    const groups: Record<string, typeof settledBills> = {};
-                    for (const bill of settledBills) {
-                      const dateKey = new Date(bill.settledAt).toLocaleDateString();
-                      if (!groups[dateKey]) groups[dateKey] = [];
-                      groups[dateKey].push(bill);
-                    }
-                    return Object.entries(groups).map(([date, bills]) => (
-                      <div key={date} className="mb-6">
-                        <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
-                          <h3 className="text-lg font-semibold text-slate-800">{date}</h3>
-                          <span className="text-sm font-bold text-blue-500">
-                            ₹{bills.reduce((sum, b) => sum + (b.finalTotal || 0), 0).toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {bills.map(bill => (
-                            <Card key={bill.id} className="p-4 border border-slate-200">
-                              <div className="flex items-center justify-between mb-3">
-                                <h4 className="font-semibold text-slate-900">{bill.tableLabel}</h4>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-slate-500">
-                                    {new Date(bill.settledAt).toLocaleTimeString()}
-                                  </span>
-                                  <button
-                                    onClick={() => deleteBillMutation.mutate(bill.id)}
-                                    className="text-red-500 hover:text-red-700"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="space-y-1 text-sm">
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Subtotal</span>
-                                  <span>₹{bill.subtotal.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Service Charge</span>
-                                  <span>₹{bill.serviceCharge.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">GST</span>
-                                  <span>₹{bill.taxAmount.toFixed(2)}</span>
-                                </div>
-                                <div className="flex justify-between font-semibold border-t border-slate-200 pt-1 mt-1">
-                                  <span className="text-slate-700">Total</span>
-                                  <span className="text-blue-500">₹{bill.finalTotal.toFixed(2)}</span>
-                                </div>
-                              </div>
-                            </Card>
-                          ))}
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </>
+              {(() => {
+                if (!settledBills || settledBills.length === 0) {
+                  return <p className="text-slate-500 text-sm">No settled bills yet.</p>;
+                }
+                const filteredBills = settledBills.filter(
+                  (bill) => toLocalDateStr(new Date(bill.settledAt)) === selectedDate
+                );
+                if (filteredBills.length === 0) {
+                  return <p className="text-slate-500 text-sm">No bills for this date.</p>;
+                }
+                const dayTotal = filteredBills.reduce((sum, b) => sum + (b.finalTotal || 0), 0);
+                return (
+                  <div className="mb-6">
+                    <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                      <h3 className="text-lg font-semibold text-slate-800">
+                        {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+                      </h3>
+                      <span className="text-sm font-bold text-green-500">
+                        ₹{dayTotal.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredBills.map(bill => (
+                        <Card key={bill.id} className="p-4 border border-slate-200">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-semibold text-slate-900">{bill.tableLabel}</h4>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">
+                                {new Date(bill.settledAt).toLocaleTimeString()}
+                              </span>
+                              <button
+                                onClick={() => deleteBillMutation.mutate(bill.id)}
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Subtotal</span>
+                              <span>₹{bill.subtotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Service Charge</span>
+                              <span>₹{bill.serviceCharge.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">GST</span>
+                              <span>₹{bill.taxAmount.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between font-semibold border-t border-slate-200 pt-1 mt-1">
+                              <span className="text-slate-700">Total</span>
+                              <span className="text-green-500">₹{bill.finalTotal.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </Card>
+
+            {/* Security */}
+            <Card className="p-4 md:p-6 bg-white">
+              <h2 className="text-xl md:text-2xl font-bold text-slate-900 mb-4 md:mb-6 flex items-center gap-2">
+                <Shield className="w-5 h-5 md:w-6 md:h-6" />
+                Security
+              </h2>
+
+              {cpSuccess && (
+                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 mb-4">
+                  {cpSuccess}
+                </div>
               )}
+              {cpError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 mb-4">
+                  {cpError}
+                </div>
+              )}
+
+              <div className="space-y-4 mb-6">
+                <h3 className="text-sm font-semibold text-slate-800">Change Password</h3>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Current Password</label>
+                  <Input
+                    type={cpShow ? "text" : "password"}
+                    value={cpCurrent}
+                    onChange={(e) => setCpCurrent(e.target.value)}
+                    placeholder="Current password"
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">New Password</label>
+                  <Input
+                    type={cpShow ? "text" : "password"}
+                    value={cpNew}
+                    onChange={(e) => setCpNew(e.target.value)}
+                    placeholder="Min. 8 characters"
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Confirm New Password</label>
+                  <Input
+                    type={cpShow ? "text" : "password"}
+                    value={cpConfirm}
+                    onChange={(e) => setCpConfirm(e.target.value)}
+                    placeholder="Re-enter new password"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCpShow(!cpShow)}
+                    className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
+                  >
+                    {cpShow ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {cpShow ? "Hide" : "Show"} passwords
+                  </button>
+                </div>
+                <Button
+                  onClick={async () => {
+                    setCpError("");
+                    setCpSuccess("");
+                    if (cpNew.length < 8) { setCpError("Password must be at least 8 characters"); return; }
+                    if (cpNew !== cpConfirm) { setCpError("Passwords do not match"); return; }
+                    setCpSubmitting(true);
+                    try {
+                      const session = await supabase.auth.getSession();
+                      const email = session.data.session?.user?.email;
+                      if (!email) { setCpError("Session error. Please re-login."); setCpSubmitting(false); return; }
+                      const { error: reAuthError } = await supabase.auth.signInWithPassword({ email, password: cpCurrent });
+                      if (reAuthError) { setCpError("Current password is incorrect"); setCpSubmitting(false); return; }
+                      const { error: updateError } = await supabase.auth.updateUser({ password: cpNew });
+                      if (updateError) { setCpError(updateError.message); setCpSubmitting(false); return; }
+                      setCpCurrent(""); setCpNew(""); setCpConfirm("");
+                      setCpSuccess("Password changed successfully!");
+                      setTimeout(() => setCpSuccess(""), 4000);
+                    } catch { setCpError("Network error. Please try again."); }
+                    setCpSubmitting(false);
+                  }}
+                  disabled={cpSubmitting}
+                  className="w-full btn-sweep font-semibold"
+                >
+                  {cpSubmitting ? "Saving..." : "Save Password"}
+                </Button>
+              </div>
+
+              <div className="text-center pt-2">
+                <button
+                  onClick={() => navigate("/forgot-password-otp")}
+                  className="text-sm text-blue-500 hover:text-blue-700 hover:underline"
+                >
+                  Forget Password?
+                </button>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4">
+                <Button
+                  onClick={async () => { await logout(); navigate("/login"); }}
+                  variant="outline"
+                  className="w-full gap-2 text-red-500 border-red-200 hover:bg-red-50 hover:text-red-600"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </Button>
+              </div>
             </Card>
           </TabsContent>
         </Tabs>
@@ -1701,6 +1899,10 @@ export default function AdminPanel() {
                 step="0.01"
                 value={editingMenuItem.price}
                 onChange={(e) => setEditingMenuItem({ ...editingMenuItem, price: parseFloat(e.target.value) })}
+              />
+              <ImageUpload
+                currentImageUrl={editingMenuItem.imageUrl}
+                onImageChange={(url) => setEditingMenuItem({ ...editingMenuItem, imageUrl: url })}
               />
               <Button
                 onClick={() => {

@@ -5,9 +5,21 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { CartProvider } from "./contexts/CartContext";
+import { AuthProvider } from "./contexts/AuthContext";
 import CustomerMenu from "./pages/CustomerMenu";
 import CartPage from "./pages/CartPage";
+import PaymentPage from "./pages/PaymentPage";
+import OrderSuccessPage from "./pages/OrderSuccessPage";
+import OrderFailedPage from "./pages/OrderFailedPage";
 import AdminPanel from "./pages/AdminPanel";
+import Login from "./pages/Login";
+import ForceChangePassword from "./pages/ForceChangePassword";
+import ForgotPassword from "./pages/ForgotPassword";
+import ForgotPasswordOTP from "./pages/ForgotPasswordOTP";
+import VerifyOTP from "./pages/VerifyOTP";
+import SetNewPassword from "./pages/SetNewPassword";
+import ResetPassword from "./pages/ResetPassword";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Home from "./pages/marketing/Home";
 import Features from "./pages/marketing/Features";
 import Pricing from "./pages/marketing/Pricing";
@@ -22,8 +34,22 @@ import FAQ from "./pages/marketing/FAQ";
 function Router() {
   return (
     <Switch>
-      <Route path={"/"} component={AdminPanel} />
+      <Route path={"/login"} component={Login} />
+      <Route path={"/force-change-password"} component={ForceChangePassword} />
+      <Route path={"/forgot-password"} component={ForgotPassword} />
+      <Route path={"/forgot-password-otp"} component={ForgotPasswordOTP} />
+      <Route path={"/verify-otp"} component={VerifyOTP} />
+      <Route path={"/set-new-password"} component={SetNewPassword} />
+      <Route path={"/reset-password"} component={ResetPassword} />
+      <Route path={"/"}>
+        <ProtectedRoute>
+          <AdminPanel />
+        </ProtectedRoute>
+      </Route>
       <Route path={"/table/:tableCode/cart"} component={CartPage} />
+      <Route path={"/table/:tableCode/payment"} component={PaymentPage} />
+      <Route path={"/table/:tableCode/payment/success"} component={OrderSuccessPage} />
+      <Route path={"/table/:tableCode/payment/failed"} component={OrderFailedPage} />
       <Route path={"/table/:tableCode"} component={CustomerMenu} />
       <Route path={"/features"} component={Features} />
       <Route path={"/pricing"} component={Pricing} />
@@ -40,23 +66,17 @@ function Router() {
   );
 }
 
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        switchable
-      >
+      <ThemeProvider defaultTheme="light" switchable>
         <TooltipProvider>
-          <CartProvider>
-            <Toaster />
-            <Router />
-          </CartProvider>
+          <AuthProvider>
+            <CartProvider>
+              <Toaster />
+              <Router />
+            </CartProvider>
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

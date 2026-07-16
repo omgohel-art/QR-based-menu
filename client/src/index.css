@@ -40,13 +40,13 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  /* Premium customer-facing palette */
-  --color-menu-bg: #fafafa;
-  --color-menu-card: #ffffff;
-  --color-menu-primary: #111827;
-  --color-menu-accent: #ffdb70;
-  --color-menu-border: #e5e7eb;
-  --color-menu-muted: #6b7280;
+  /* Premium coffee color palette — 60-30-10 rule */
+  --color-menu-bg: #F8F4EC;
+  --color-menu-card: #FFFCF8;
+  --color-menu-primary: #4A3428;
+  --color-menu-accent: #C08A4D;
+  --color-menu-border: #E8E0D4;
+  --color-menu-muted: #8B7E72;
   --color-menu-success: #10b981;
 }
 
