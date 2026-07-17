@@ -1,0 +1,2 @@
+ALTER TABLE "businessSettings" ADD COLUMN IF NOT EXISTS "printerIp" TEXT DEFAULT '';
+ALTER TABLE "businessSettings" ADD COLUMN IF NOT EXISTS "printerPort" INTEGER DEFAULT 9100;

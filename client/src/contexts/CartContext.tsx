@@ -5,13 +5,14 @@ interface CartItem {
   name: string;
   price: number;
   quantity: number;
+  imageUrl?: string | null;
 }
 
 interface CartContextValue {
   cart: CartItem[];
   cartTotal: number;
   cartItemCount: number;
-  addToCart: (menuItem: { id: number; name: string; price: number | string }) => void;
+  addToCart: (menuItem: { id: number; name: string; price: number | string; imageUrl?: string | null }) => void;
   removeFromCart: (menuItemId: number) => void;
   updateQuantity: (menuItemId: number, quantity: number) => void;
   clearCart: () => void;
@@ -35,7 +36,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cart));
   }, [cart]);
 
-  const addToCart = useCallback((menuItem: { id: number; name: string; price: number | string }) => {
+  const addToCart = useCallback((menuItem: { id: number; name: string; price: number | string; imageUrl?: string | null }) => {
     setCart(prev => {
       const existing = prev.find(item => item.menuItemId === menuItem.id);
       if (existing) {
@@ -50,6 +51,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         name: menuItem.name,
         price: typeof menuItem.price === 'string' ? parseFloat(menuItem.price) : menuItem.price,
         quantity: 1,
+        imageUrl: menuItem.imageUrl ?? null,
       }];
     });
   }, []);

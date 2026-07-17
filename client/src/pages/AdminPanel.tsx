@@ -16,6 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import ImageUpload from "@/components/ImageUpload";
+import BusinessSettings from "@/components/BusinessSettings";
+import ThermalReceipt from "@/components/ThermalReceipt";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2, Settings, Clock, Users, TrendingUp, RefreshCw, Bell, Pencil, QrCode, Copy, Check, Receipt, AlertTriangle, CheckCircle, LogOut, Eye, EyeOff, Shield } from "lucide-react";
 import QRCode from 'qrcode';
@@ -33,6 +35,7 @@ export default function AdminPanel() {
     return localStorage.getItem("kitchenMode") === "true" ? "orderqueue" : "orders";
   });
   const isKitchenMode = localStorage.getItem("kitchenMode") === "true";
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "business">("general");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newTableLabel, setNewTableLabel] = useState("");
   const [newItemData, setNewItemData] = useState({
@@ -47,7 +50,10 @@ export default function AdminPanel() {
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [sessionDetailsKey, setSessionDetailsKey] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
+  const [printSessionId, setPrintSessionId] = useState<number | null>(null);
   const [lastOrderTime, setLastOrderTime] = useState<number>(0);
+  const [selectedQueueOrder, setSelectedQueueOrder] = useState<any | null>(null);
+  const [showQueueDetail, setShowQueueDetail] = useState(false);
 
   // Edit States
   const [editingTable, setEditingTable] = useState<{ id: number; label: string } | null>(null);
@@ -195,14 +201,15 @@ export default function AdminPanel() {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const { data: settingsData } = await supabase.from('cafeSettings').select('*').limit(1);
-      const scRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].serviceChargePercentage.toString()) : 0;
-      const taxRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].taxPercentage.toString()) : 0;
-
       const { data: sessions } = await supabase
         .from('sessions')
         .select('subtotal')
-        .gte('createdAt', todayStart.toISOString());
+        .eq('status', 'settled')
+        .gte('settledAt', todayStart.toISOString());
+
+      const { data: settingsData } = await supabase.from('cafeSettings').select('*').limit(1);
+      const scRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].serviceChargePercentage.toString()) : 0;
+      const taxRate = settingsData && settingsData.length > 0 ? parseFloat(settingsData[0].taxPercentage.toString()) : 0;
 
       let total = 0;
       if (sessions) {
@@ -293,13 +300,14 @@ export default function AdminPanel() {
         .select('*')
         .in('orderId', orderIds);
 
-      // Get menu item names
+      // Get menu item names and prices
       const menuItemIds = Array.from(new Set((orderItems || []).map((i: any) => i.menuItemId)));
       const { data: menuItemsData } = await supabase
         .from('menuItems')
-        .select('id, name')
+        .select('id, name, price')
         .in('id', menuItemIds);
       const menuItemMap = new Map((menuItemsData || []).map((m: any) => [m.id, m.name]));
+      const menuPriceMap = new Map((menuItemsData || []).map((m: any) => [m.id, parseFloat(m.price.toString())]));
 
       // Get table labels
       const tableIds = sessions.map((s: any) => s.tableId);
@@ -348,12 +356,16 @@ export default function AdminPanel() {
         for (const order of sessionOrders) {
           const items = (orderItems || [])
             .filter((i: any) => i.orderId === order.id)
-            .map((i: any) => ({
-              id: i.id,
-              menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`,
-              quantity: i.quantity,
-              priceAtOrderTime: parseFloat(i.priceAtOrderTime.toString()),
-            }));
+            .map((i: any) => {
+              const storedPrice = parseFloat(i.priceAtOrderTime?.toString() || '0');
+              const price = storedPrice > 0 ? storedPrice : (menuPriceMap.get(i.menuItemId) || 0);
+              return {
+                id: i.id,
+                menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`,
+                quantity: i.quantity,
+                priceAtOrderTime: price,
+              };
+            });
           
           const subtotal = items.reduce((acc: number, item: any) => acc + (item.priceAtOrderTime * item.quantity), 0);
           const itemCount = items.reduce((acc: number, item: any) => acc + item.quantity, 0);
@@ -385,6 +397,9 @@ export default function AdminPanel() {
         const hasPaymentPending = pendingOrders.length > 0;
         const oldestPendingOrder = hasPaymentPending ? pendingOrders[0] : null;
 
+        // Check if payment is marked (all non-settled orders have paymentStatus='paid')
+        const hasPaymentMarked = hasPaymentPending && pendingOrders.every((o: any) => o.paymentStatus === 'paid');
+
         result.push({
           id: tableId,
           label: tableData.tableLabel,
@@ -396,12 +411,21 @@ export default function AdminPanel() {
           finalTotal: sessionSubtotal + sc + tax,
           lastActivityAt: tableData.orders[tableData.orders.length - 1]?.submittedAt || new Date().toISOString(),
           hasPaymentPending,
+          hasPaymentMarked,
           oldestPendingOrder,
         });
       }
 
       return result;
     }
+  });
+
+  const { data: bizSettings } = useQuery({
+    queryKey: ['businessSettings'],
+    queryFn: async () => {
+      const { data } = await supabase.from('businessSettings').select('*').limit(1).single();
+      return data;
+    },
   });
 
   const { data: sessionDetails } = useQuery({
@@ -433,9 +457,14 @@ export default function AdminPanel() {
         const { data: items } = await supabase.from('orderItems').select('*').in('orderId', orderIds);
         if (items && items.length > 0) {
           const menuItemIds = Array.from(new Set(items.map(i => i.menuItemId)));
-          const { data: menuItemsData } = await supabase.from('menuItems').select('id, name').in('id', menuItemIds);
+          const { data: menuItemsData } = await supabase.from('menuItems').select('id, name, price').in('id', menuItemIds);
           const menuItemMap = new Map((menuItemsData || []).map(m => [m.id, m.name]));
-          allItems = items.map(i => ({ ...i, menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}` }));
+          const menuPriceMap = new Map((menuItemsData || []).map(m => [m.id, parseFloat(m.price.toString())]));
+          allItems = items.map(i => {
+            const storedPrice = parseFloat(i.priceAtOrderTime?.toString() || '0');
+            const price = storedPrice > 0 ? storedPrice : (menuPriceMap.get(i.menuItemId) || 0);
+            return { ...i, menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`, priceAtOrderTime: price };
+          });
         }
         // Sort orders by orderNumber if available, else by id
         const sortedOrders = [...orders].sort((a, b) => {
@@ -607,30 +636,39 @@ export default function AdminPanel() {
   });
 
   // Settle individual order
-  const settleOrderMutation = useMutation({
-    mutationFn: async (orderId: number) => {
-      const { error } = await supabase.from('orders').update({ status: 'settled' }).eq('id', orderId);
+  // Mark as Paid - only updates payment status, does NOT settle
+  const markAsPaidMutation = useMutation({
+    mutationFn: async (sessionId: number) => {
+      // Update all orders in session to paymentStatus='paid'
+      const { error } = await supabase.from('orders').update({ paymentStatus: 'paid' }).eq('sessionId', sessionId).neq('status', 'settled');
       if (error) throw error;
-      
-      // Check if all orders in the session are settled
-      const { data: order } = await supabase.from('orders').select('sessionId').eq('id', orderId).single();
-      if (order) {
-        const { data: allOrders } = await supabase.from('orders').select('status').eq('sessionId', order.sessionId);
-        const allSettled = allOrders?.every(o => o.status === 'settled') ?? false;
-        
-        if (allSettled) {
-          const { data: session } = await supabase.from('sessions').select('tableId').eq('id', order.sessionId).single();
-          await supabase.from('sessions').update({
-            status: 'settled',
-            settledAt: new Date().toISOString()
-          }).eq('id', order.sessionId);
-          if (session) {
-            await supabase.from('tables').update({
-              status: 'empty',
-              activeSessionId: null
-            }).eq('id', session.tableId);
-          }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activeTables'] });
+      toast.success("Payment recorded");
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  // Settle Bill - final settlement
+  const settleBillMutation = useMutation({
+    mutationFn: async (sessionId: number) => {
+      const { data: orders } = await supabase.from('orders').select('id').eq('sessionId', sessionId);
+      if (orders && orders.length > 0) {
+        for (const order of orders) {
+          await supabase.from('orders').update({ status: 'settled' }).eq('id', order.id);
         }
+      }
+      await supabase.from('sessions').update({
+        status: 'settled',
+        settledAt: new Date().toISOString()
+      }).eq('id', sessionId);
+      const { data: session } = await supabase.from('sessions').select('tableId').eq('id', sessionId).single();
+      if (session) {
+        await supabase.from('tables').update({
+          status: 'empty',
+          activeSessionId: null
+        }).eq('id', session.tableId);
       }
     },
     onSuccess: () => {
@@ -638,7 +676,7 @@ export default function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ['tables'] });
       queryClient.invalidateQueries({ queryKey: ['todayRevenue'] });
       queryClient.invalidateQueries({ queryKey: ['settledBills'] });
-      toast.success("Order marked as paid");
+      toast.success("Bill settled successfully");
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -685,13 +723,14 @@ export default function AdminPanel() {
         .select('*')
         .in('orderId', orderIds);
 
-      // Get menu item names
+      // Get menu item names and prices
       const menuItemIds = Array.from(new Set((orderItems || []).map((i: any) => i.menuItemId)));
       const { data: menuItemsData } = await supabase
         .from('menuItems')
-        .select('id, name')
+        .select('id, name, price')
         .in('id', menuItemIds);
       const menuItemMap = new Map((menuItemsData || []).map((m: any) => [m.id, m.name]));
+      const menuPriceMap = new Map((menuItemsData || []).map((m: any) => [m.id, parseFloat(m.price.toString())]));
 
       // Get table labels
       const tableIds = sessions.map((s: any) => s.tableId);
@@ -712,6 +751,7 @@ export default function AdminPanel() {
               id: i.id,
               menuItemName: menuItemMap.get(i.menuItemId) || `Item #${i.menuItemId}`,
               quantity: i.quantity,
+              delivered: i.delivered,
             }));
 
           result.push({
@@ -740,6 +780,29 @@ export default function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ['orderQueue'] });
       queryClient.invalidateQueries({ queryKey: ['activeTables'] });
       toast.success("Order marked as delivered");
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  // Mark an individual orderItem as delivered (optimistic + auto-deliver)
+  const markItemDeliveredMutation = useMutation({
+    mutationFn: async ({ itemId, orderId }: { itemId: number; orderId: number }) => {
+      const { error } = await supabase.from('orderItems').update({ delivered: true }).eq('id', itemId);
+      if (error) throw error;
+      // Check if all items in this order are delivered
+      const { data: remaining } = await supabase
+        .from('orderItems')
+        .select('id')
+        .eq('orderId', orderId)
+        .eq('delivered', false);
+      if (!remaining || remaining.length === 0) {
+        await supabase.from('orders').update({ status: 'delivered' }).eq('id', orderId);
+      }
+      return { allDelivered: !remaining || remaining.length === 0 };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['activeTables'] });
     },
     onError: (error: any) => toast.error(error.message),
   });
@@ -812,6 +875,66 @@ export default function AdminPanel() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <style>{`
+.delivery-check {
+  cursor: pointer;
+  position: relative;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  -webkit-tap-highlight-color: transparent;
+  transform: translate3d(0, 0, 0);
+}
+.delivery-check:before {
+  content: "";
+  position: absolute;
+  top: -15px;
+  left: -15px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(34, 50, 84, 0.03);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.delivery-check svg {
+  position: relative;
+  z-index: 1;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke: #c8ccd4;
+  stroke-width: 1.5;
+  transform: translate3d(0, 0, 0);
+  transition: all 0.2s ease;
+}
+.delivery-check svg path {
+  stroke-dasharray: 60;
+  stroke-dashoffset: 0;
+}
+.delivery-check svg polyline {
+  stroke-dasharray: 22;
+  stroke-dashoffset: 66;
+}
+.delivery-check:hover:before {
+  opacity: 1;
+}
+.delivery-check:hover svg {
+  stroke: #22c55e;
+}
+.delivery-cbx:checked + .delivery-check svg {
+  stroke: #22c55e;
+}
+.delivery-cbx:checked + .delivery-check svg path {
+  stroke-dashoffset: 60;
+  transition: all 0.3s linear;
+}
+.delivery-cbx:checked + .delivery-check svg polyline {
+  stroke-dashoffset: 42;
+  transition: all 0.2s linear;
+  transition-delay: 0.15s;
+}
+      `}</style>
       {/* Header */}
       <div className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4">
@@ -840,7 +963,7 @@ export default function AdminPanel() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="flex w-full overflow-x-auto mb-6 md:mb-8 bg-white border border-slate-200">
+          <TabsList className="flex w-full overflow-x-auto mb-6 md:mb-8 bg-white border border-slate-200 sticky top-[96px] z-30 shadow-sm">
             {!isKitchenMode && <TabsTrigger value="orders" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Orders</TabsTrigger>}
             <TabsTrigger value="orderqueue" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Order Queue</TabsTrigger>
             {!isKitchenMode && <TabsTrigger value="tables" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Tables</TabsTrigger>}
@@ -1001,31 +1124,110 @@ export default function AdminPanel() {
                       </div>
                     </div>
 
+                    {/* Invoice Preview (shown after payment marked) */}
+                    {table.hasPaymentMarked && bizSettings && (
+                      <div className="border border-slate-200 rounded-lg p-4 mb-4 bg-slate-50 text-xs" id={`invoice-${table.sessionId}`}>
+                        <div className="text-center border-b border-slate-200 pb-3 mb-3">
+                          {bizSettings.logoUrl && (
+                            <img src={bizSettings.logoUrl} alt="Logo" className="h-10 mx-auto mb-1.5 object-contain" />
+                          )}
+                          <h4 className="text-sm font-bold text-slate-900">{bizSettings.restaurantName || 'Restaurant'}</h4>
+                          <p className="text-slate-500">{bizSettings.address}{bizSettings.city ? `, ${bizSettings.city}` : ''}{bizSettings.state ? `, ${bizSettings.state}` : ''}</p>
+                          <p className="text-slate-500">{bizSettings.phone}</p>
+                          {bizSettings.gstNumber && <p className="text-slate-500">GST: {bizSettings.gstNumber}</p>}
+                        </div>
+                        <div className="flex justify-between text-slate-600 mb-2">
+                          <span>Invoice: {bizSettings.invoicePrefix || 'INV-'}{String(table.sessionId).padStart(6, '0')}</span>
+                          <span>{new Date().toLocaleDateString('en-IN')}</span>
+                        </div>
+                        <table className="w-full mb-2">
+                          <thead>
+                            <tr className="border-b border-slate-200">
+                              <th className="text-left py-1 font-semibold text-slate-700">Item</th>
+                              <th className="text-center py-1 font-semibold text-slate-700">Qty</th>
+                              <th className="text-right py-1 font-semibold text-slate-700">Amt</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {table.orders.flatMap((o: any) => o.items).map((item: any, i: number) => (
+                              <tr key={i} className="border-b border-slate-100">
+                                <td className="py-1 text-slate-700">{item.menuItemName}</td>
+                                <td className="py-1 text-center text-slate-700">{item.quantity}</td>
+                                <td className="py-1 text-right text-slate-700">₹{(item.priceAtOrderTime * item.quantity).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div className="border-t border-slate-200 pt-2 space-y-1">
+                          <div className="flex justify-between text-slate-600"><span>Subtotal</span><span>₹{table.subtotal.toFixed(2)}</span></div>
+                          {bizSettings.gstEnabled && bizSettings.gstRate > 0 && (
+                            <>
+                              <div className="flex justify-between text-slate-600"><span>CGST ({bizSettings.gstRate / 2}%)</span><span>₹{(table.subtotal * bizSettings.gstRate / 200).toFixed(2)}</span></div>
+                              <div className="flex justify-between text-slate-600"><span>SGST ({bizSettings.gstRate / 2}%)</span><span>₹{(table.subtotal * bizSettings.gstRate / 200).toFixed(2)}</span></div>
+                            </>
+                          )}
+                          <div className="flex justify-between font-bold text-slate-900 pt-1 border-t border-slate-200">
+                            <span>Total</span>
+                            <span className="text-green-500">₹{table.finalTotal.toFixed(2)}</span>
+                          </div>
+                        </div>
+                        {bizSettings.footerMessage && (
+                          <div className="mt-2 pt-2 border-t border-slate-200 text-center text-slate-500 whitespace-pre-line">{bizSettings.footerMessage}</div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex gap-2">
-                      <Button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedSessionId(table.sessionId);
-                          setSessionDetailsKey(k => k + 1);
-                          setShowDetails(true);
-                        }}
-                        className="flex-1 btn-sweep"
-                      >
-                        View Details
-                      </Button>
-                      {table.hasPaymentPending && (
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (table.oldestPendingOrder) {
-                              settleOrderMutation.mutate(table.oldestPendingOrder.id);
-                            }
-                          }}
-                          variant="outline"
-                          className="flex-1 btn-sweep-green"
-                        >
-                          Mark as Paid
-                        </Button>
+                      {!table.hasPaymentMarked ? (
+                        <>
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedSessionId(table.sessionId);
+                              setSessionDetailsKey(k => k + 1);
+                              setShowDetails(true);
+                            }}
+                            className="flex-1 btn-sweep"
+                          >
+                            View Details
+                          </Button>
+                          {table.hasPaymentPending && (
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markAsPaidMutation.mutate(table.sessionId);
+                              }}
+                              variant="outline"
+                              className="flex-1 btn-sweep-green"
+                              disabled={markAsPaidMutation.isPending}
+                            >
+                              Mark as Paid
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              settleBillMutation.mutate(table.sessionId);
+                            }}
+                            className="flex-1 btn-sweep"
+                            disabled={settleBillMutation.isPending}
+                          >
+                            Settle Bill
+                          </Button>
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPrintSessionId(table.sessionId);
+                            }}
+                            variant="outline"
+                            className="flex-1 btn-sweep-green"
+                          >
+                            Print Bill
+                          </Button>
+                        </>
                       )}
                     </div>
                   </Card>
@@ -1124,13 +1326,18 @@ export default function AdminPanel() {
                             <div className="space-y-1.5">
                               {order.items?.map((item: any) => (
                                 <div key={item.id} className="flex items-center justify-between text-sm">
-                                  <div>
-                                    <p className="font-medium text-slate-900">{item.menuItemName}</p>
-                                    <p className="text-xs text-slate-500">
-                                      ₹{typeof item.priceAtOrderTime === 'string'
-                                        ? parseFloat(item.priceAtOrderTime).toFixed(2)
-                                        : (item.priceAtOrderTime as number).toFixed(2)}
-                                    </p>
+                                  <div className="flex items-center gap-2">
+                                    {item.delivered && (
+                                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                    )}
+                                    <div>
+                                      <p className={`font-medium ${item.delivered ? 'text-green-700' : 'text-slate-900'}`}>{item.menuItemName}</p>
+                                      <p className="text-xs text-slate-500">
+                                        ₹{typeof item.priceAtOrderTime === 'string'
+                                          ? parseFloat(item.priceAtOrderTime).toFixed(2)
+                                          : (item.priceAtOrderTime as number).toFixed(2)}
+                                      </p>
+                                    </div>
                                   </div>
                                   <Badge variant="outline" className="text-xs">{item.quantity}</Badge>
                                 </div>
@@ -1161,7 +1368,14 @@ export default function AdminPanel() {
             ) : orderQueue && orderQueue.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {orderQueue.map(order => (
-                  <Card key={order.id} className="p-4 md:p-5 bg-white hover:shadow-lg transition-shadow">
+                  <Card
+                    key={order.id}
+                    className="p-4 md:p-5 bg-white hover:shadow-lg transition-shadow cursor-pointer"
+                    onClick={() => {
+                      setSelectedQueueOrder(order);
+                      setShowQueueDetail(true);
+                    }}
+                  >
                     <div className="flex items-start justify-between mb-3">
                       <div>
                         <h3 className="text-lg font-bold text-slate-900">{order.tableLabel}</h3>
@@ -1178,17 +1392,26 @@ export default function AdminPanel() {
                     <div className="space-y-1.5 mb-4">
                       {order.items.map((item: any) => (
                         <div key={item.id} className="flex items-center justify-between text-sm">
-                          <span className="text-slate-900">{item.quantity}× {item.menuItemName}</span>
+                          <span className={`text-slate-900 ${item.delivered ? 'line-through text-slate-400' : ''}`}>
+                            {item.quantity}× {item.menuItemName}
+                          </span>
+                          {item.delivered && (
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          )}
                         </div>
                       ))}
                     </div>
 
                     <Button
-                      onClick={() => markDeliveredMutation.mutate(order.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedQueueOrder(order);
+                        setShowQueueDetail(true);
+                      }}
                       className="w-full btn-sweep-green gap-2"
                     >
                       <CheckCircle className="w-3 h-3" />
-                      Delivered
+                      Manage Items
                     </Button>
                   </Card>
                 ))}
@@ -1200,6 +1423,91 @@ export default function AdminPanel() {
                 <p className="text-sm text-slate-500 mt-2">Orders will appear here when customers place them</p>
               </Card>
             )}
+
+            {/* Order Queue Item Detail Dialog */}
+            <Dialog open={showQueueDetail} onOpenChange={(open) => { setShowQueueDetail(open); if (!open) setSelectedQueueOrder(null); }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>
+                    {selectedQueueOrder?.tableLabel} — #{selectedQueueOrder?.orderNumber?.toString().padStart(3, '0') || ''}
+                  </DialogTitle>
+                </DialogHeader>
+                {selectedQueueOrder && (
+                  <div className="space-y-4">
+                    <p className="text-sm text-slate-500">
+                      <Clock className="w-3 h-3 inline mr-1" />
+                      {new Date(selectedQueueOrder.submittedAt).toLocaleTimeString()}
+                    </p>
+                    <div className="space-y-3">
+                      {selectedQueueOrder.items.map((item: any) => (
+                        <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg border border-slate-200">
+                          <input
+                            type="checkbox"
+                            id={`delivery-cbx-${item.id}`}
+                            className="delivery-cbx hidden"
+                            checked={item.delivered}
+                            onChange={() => {
+                              if (!item.delivered) {
+                                const currentOrderId = selectedQueueOrder?.id;
+                                // Optimistic local update for instant tick
+                                setSelectedQueueOrder((prev: any) => {
+                                  if (!prev) return prev;
+                                  const updatedItems = prev.items.map((it: any) =>
+                                    it.id === item.id ? { ...it, delivered: true } : it
+                                  );
+                                  // Check if all delivered → auto-close after brief delay
+                                  const allDone = updatedItems.every((it: any) => it.delivered);
+                                  if (allDone && currentOrderId) {
+                                    setTimeout(() => {
+                                      markDeliveredMutation.mutate(currentOrderId);
+                                      setShowQueueDetail(false);
+                                      setSelectedQueueOrder(null);
+                                    }, 400);
+                                  }
+                                  return { ...prev, items: updatedItems };
+                                });
+                                markItemDeliveredMutation.mutate({ itemId: item.id, orderId: currentOrderId });
+                              }
+                            }}
+                          />
+                          <label htmlFor={`delivery-cbx-${item.id}`} className="delivery-check flex-shrink-0">
+                            <svg viewBox="0 0 24 24" width="18" height="18">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
+                              <polyline points="7 12 10 15 17 8" />
+                            </svg>
+                          </label>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium ${item.delivered ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+                              {item.quantity}× {item.menuItemName}
+                            </p>
+                          </div>
+                          {item.delivered && (
+                            <span className="text-xs text-green-600 font-medium">Served</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => { setShowQueueDetail(false); setSelectedQueueOrder(null); }}
+                      >
+                        Close
+                      </Button>
+                      <Button
+                        className="flex-1 btn-sweep-green gap-2"
+                        onClick={() => markDeliveredMutation.mutate(selectedQueueOrder.id)}
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        All Delivered
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Table Management Tab */}
@@ -1463,24 +1771,22 @@ export default function AdminPanel() {
                   return (
                     <div key={category.id} id={`admin-cat-${category.id}`} className="scroll-mt-20">
                       <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">{category.name}</h3>
-                      <div className="space-y-3">
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                         {catItems.map((item: any) => (
-                          <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
-                            <div className="flex items-center gap-3 flex-1">
-                              {item.imageUrl ? (
-                                <img src={item.imageUrl} alt={item.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                              ) : (
-                                <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
-                                  <span className="text-xs text-slate-400">No img</span>
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <h4 className="font-semibold text-slate-900 truncate">{item.name}</h4>
-                                {item.description && <p className="text-xs text-slate-500 truncate">{item.description}</p>}
-                                <p className="text-sm text-slate-600">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
+                          <Card key={item.id} className="p-3 border border-slate-200 bg-white hover:shadow-md transition-shadow flex flex-col">
+                            {item.imageUrl ? (
+                              <img src={item.imageUrl} alt={item.name} className="w-full h-28 rounded-lg object-cover mb-2" />
+                            ) : (
+                              <div className="w-full h-28 rounded-lg bg-slate-100 flex items-center justify-center mb-2">
+                                <span className="text-xs text-slate-400">No image</span>
                               </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-semibold text-sm text-slate-900 truncate">{item.name}</h4>
+                              {item.description && <p className="text-[11px] text-slate-500 truncate">{item.description}</p>}
+                              <p className="text-sm font-bold text-green-500 mt-1">₹{typeof item.price === 'string' ? parseFloat(item.price).toFixed(2) : (item.price as number).toFixed(2)}</p>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex gap-1 mt-2 pt-2 border-t border-slate-100">
                               <Button
                                 onClick={() => setEditingMenuItem({
                                   id: item.id,
@@ -1490,26 +1796,28 @@ export default function AdminPanel() {
                                   categoryId: item.categoryId,
                                   imageUrl: item.imageUrl || null
                                 })}
+                                size="sm"
                                 variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-600 hover:text-blue-500"
+                                className="flex-1 h-7 text-xs text-slate-600 hover:text-blue-500 hover:bg-blue-50"
                               >
-                                <Pencil className="w-4 h-4" />
+                                <Pencil className="w-3 h-3 mr-1" />
+                                Edit
                               </Button>
                               <Button
                                 onClick={() => {
-                                  if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
+                                  if (confirm(`Delete "${item.name}"?`)) {
                                     deleteMenuItemMutation.mutate(item.id);
                                   }
                                 }}
+                                size="sm"
                                 variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                className="flex-1 h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3 h-3 mr-1" />
+                                Delete
                               </Button>
                             </div>
-                          </div>
+                          </Card>
                         ))}
                       </div>
                     </div>
@@ -1521,6 +1829,31 @@ export default function AdminPanel() {
 
           {/* Settings Tab */}
           <TabsContent value="settings" className="space-y-6">
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setSettingsSubTab("general")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  settingsSubTab === "general"
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                General Settings
+              </button>
+              <button
+                onClick={() => setSettingsSubTab("business")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  settingsSubTab === "business"
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                Business Info
+              </button>
+            </div>
+
+            {settingsSubTab === "general" && (
+            <>
             <Card className="p-4 md:p-6 bg-white">
               <h2 className="text-xl md:text-2xl font-bold text-slate-900 mb-4 md:mb-6 flex items-center gap-2">
                 <Settings className="w-5 h-5 md:w-6 md:h-6" />
@@ -1537,27 +1870,27 @@ export default function AdminPanel() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-900 mb-2">
-                      Tax Percentage
+                      Tax Percentage (%)
                     </label>
                     <Input
                       type="number"
-                      placeholder="0.00"
-                      step="0.01"
+                      placeholder="0"
                       value={taxPercentage}
                       onChange={(e) => setTaxPercentage(e.target.value)}
                     />
+                    <p className="text-xs text-slate-400 mt-1">For display only. Actual GST is configured in Business Info.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-900 mb-2">
-                      Service Charge Percentage
+                      Service Charge Percentage (%)
                     </label>
                     <Input
                       type="number"
-                      placeholder="0.00"
-                      step="0.01"
+                      placeholder="0"
                       value={serviceChargePercentage}
                       onChange={(e) => setServiceChargePercentage(e.target.value)}
                     />
+                    <p className="text-xs text-slate-400 mt-1">For display only. Not applied to orders.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-900 mb-2">
@@ -1813,6 +2146,10 @@ export default function AdminPanel() {
                 </Button>
               </div>
             </Card>
+            </>
+            )}
+
+            {settingsSubTab === "business" && <BusinessSettings />}
           </TabsContent>
         </Tabs>
       </div>
@@ -1948,6 +2285,22 @@ export default function AdminPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      {printSessionId && activeOrders && (
+        (() => {
+          const tableData = activeOrders.find((t: any) => t.sessionId === printSessionId);
+          if (!tableData) return null;
+          return (
+            <ThermalReceipt
+              data={bizSettings}
+              table={tableData}
+              printerIp={bizSettings?.printerIp}
+              printerPort={bizSettings?.printerPort}
+              onClose={() => setPrintSessionId(null)}
+            />
+          );
+        })()
+      )}
 
       <div className="mt-16">
         <Footer variant="admin" />

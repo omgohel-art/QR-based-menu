@@ -1,0 +1,223 @@
+.thermal-receipt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thermal-receipt {
+  background: #fff;
+  width: 320px;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.receipt-content {
+  font-family: 'Courier New', 'Lucida Console', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #000;
+  padding: 0;
+}
+
+.receipt-logo {
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.receipt-logo img {
+  max-height: 50px;
+  max-width: 200px;
+  object-fit: contain;
+}
+
+.receipt-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  margin: 0 0 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.receipt-line {
+  text-align: center;
+  margin: 1px 0;
+  font-size: 11px;
+}
+
+.receipt-divider {
+  border-top: 1px dashed #999;
+  margin: 8px 0;
+}
+
+.receipt-divider-thin {
+  border-top: 1px dotted #ccc;
+  margin: 4px 0;
+}
+
+.receipt-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 1px 0;
+  font-size: 11px;
+}
+
+.receipt-items-header {
+  display: flex;
+  font-weight: bold;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.receipt-item {
+  display: flex;
+  font-size: 11px;
+  margin: 1px 0;
+  line-height: 1.3;
+}
+
+.receipt-item-name {
+  flex: 1;
+  word-break: break-word;
+  padding-right: 4px;
+}
+
+.receipt-item-qty {
+  width: 30px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.receipt-item-price {
+  width: 70px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.receipt-total-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin: 1px 0;
+}
+
+.receipt-grand-total {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: bold;
+  margin: 4px 0;
+}
+
+.receipt-footer {
+  text-align: center;
+  font-size: 11px;
+  white-space: pre-line;
+  margin: 4px 0;
+}
+
+.receipt-print-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.receipt-print-btn:hover {
+  background: #15803d;
+}
+
+.receipt-close-btn {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.receipt-close-btn:hover {
+  background: #e2e8f0;
+}
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+
+  body > * {
+    display: none !important;
+  }
+
+  body > .thermal-receipt-overlay {
+    display: block !important;
+    position: static !important;
+    background: none !important;
+    width: 80mm !important;
+    margin: 0 auto !important;
+  }
+
+  .thermal-receipt-overlay .thermal-receipt {
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    padding: 3mm 4mm !important;
+    box-shadow: none !important;
+  }
+
+  .thermal-receipt-overlay .receipt-content {
+    font-size: 10px !important;
+  }
+
+  .thermal-receipt-overlay .receipt-title {
+    font-size: 14px !important;
+  }
+
+  .thermal-receipt-overlay .receipt-grand-total {
+    font-size: 12px !important;
+  }
+
+  .thermal-receipt-overlay .receipt-item,
+  .thermal-receipt-overlay .receipt-line,
+  .thermal-receipt-overlay .receipt-row,
+  .thermal-receipt-overlay .receipt-total-row {
+    font-size: 10px !important;
+  }
+
+  .thermal-receipt-overlay .receipt-logo img {
+    max-height: 40px !important;
+  }
+
+  .thermal-receipt-overlay .receipt-print-btn,
+  .thermal-receipt-overlay .receipt-close-btn {
+    display: none !important;
+  }
+
+  body > .thermal-receipt-overlay ~ * {
+    display: none !important;
+  }
+}

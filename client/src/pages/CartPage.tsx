@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Minus, Plus, ShoppingBag, Trash2, Send, UtensilsCrossed, CreditCard } from "lucide-react";
+import { ArrowLeft, Minus, Plus, ShoppingBag, Trash2, Send, UtensilsCrossed, CreditCard, ImageOff } from "lucide-react";
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
 import Footer from "@/components/marketing/Footer";
 import PaymentModal from "@/components/PaymentModal";
+import AnimatedPrice from "@/components/AnimatedPrice";
+import OrderSuccessModal from "@/components/OrderSuccessModal";
 
 export default function CartPage() {
   const [, params] = useRoute("/table/:tableCode/cart");
@@ -20,6 +22,19 @@ export default function CartPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deviceToken] = useState(() => nanoid(16));
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successOrderId, setSuccessOrderId] = useState<number | null>(null);
+  const [successTotal, setSuccessTotal] = useState(0);
+
+  const handleSuccessContinue = useCallback(() => {
+    setShowSuccessModal(false);
+    navigate(`/table/${tableCode}`);
+  }, [tableCode, navigate]);
+
+  const handleSuccessViewOrder = useCallback(() => {
+    setShowSuccessModal(false);
+    navigate(`/table/${tableCode}`);
+  }, [tableCode, navigate]);
 
   const { data: session } = useQuery({
     queryKey: ["cartSession", tableCode],
@@ -142,13 +157,14 @@ export default function CartPage() {
         lastActivityAt: new Date().toISOString(),
       }).eq("id", sessionData.id);
 
-      return { success: true };
+      return { success: true, orderId: newOrder.id as number };
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       clearCart();
       queryClient.invalidateQueries({ queryKey: ["cartSession", tableCode] });
-      toast.success("Order placed successfully!");
-      navigate(`/table/${tableCode}`);
+      setSuccessOrderId(_data?.orderId ?? null);
+      setSuccessTotal(finalTotal);
+      setShowSuccessModal(true);
     },
     onError: (error: any) => {
       toast.error(error.message || "Failed to place order");
@@ -271,15 +287,24 @@ export default function CartPage() {
                 exit={{ opacity: 0, x: -40 }}
                 transition={{ duration: 0.2, ease: "easeOut" }}
               >
-                <div className="bg-white rounded-[20px] border border-menu-border/60 shadow-[0_2px_20px_rgba(0,0,0,0.04)] p-5">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="bg-white rounded-[20px] border border-menu-border/60 shadow-[0_2px_20px_rgba(0,0,0,0.04)] p-4">
+                  <div className="flex items-center gap-3">
+                    {item.imageUrl ? (
+                      <div className="w-16 h-16 rounded-[12px] overflow-hidden bg-menu-bg shrink-0">
+                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded-[12px] bg-menu-bg flex items-center justify-center shrink-0">
+                        <ImageOff className="w-5 h-5 text-menu-muted/40" />
+                      </div>
+                    )}
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base font-medium text-menu-primary">{item.name}</h3>
                       <p className="text-sm text-menu-muted mt-0.5">
                         <span className="text-menu-muted/60">₹</span>{item.price.toFixed(2)} each
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0 flex-col">
                       <div className="flex items-center gap-1 bg-menu-bg border border-menu-border/60 rounded-[12px] px-1 py-0.5">
                         <motion.button
                           whileTap={{ scale: 0.93 }}
@@ -313,7 +338,8 @@ export default function CartPage() {
                   </div>
                   <div className="text-right mt-3 pt-3 border-t border-menu-border/30">
                     <span className="text-base font-bold text-menu-accent">
-                      <span className="text-menu-muted/60 font-medium">₹</span>{(item.price * item.quantity).toFixed(2)}
+                      <span className="text-menu-muted/60 font-medium">₹</span>
+                      <AnimatedPrice value={item.price * item.quantity} className="text-menu-accent" decimals={2} />
                     </span>
                   </div>
                 </div>
@@ -334,14 +360,16 @@ export default function CartPage() {
                 <div className="flex justify-between text-sm">
                   <span className="text-menu-muted">Subtotal ({cartItemCount} items)</span>
                   <span className="text-menu-primary font-medium">
-                    <span className="text-menu-muted/60">₹</span>{cartTotal.toFixed(2)}
+                    <span className="text-menu-muted/60">₹</span>
+                    <AnimatedPrice value={cartTotal} className="text-menu-primary" decimals={2} />
                   </span>
                 </div>
                 {settings && settings.serviceChargePercentage > 0 && (
                   <div className="flex justify-between text-sm">
                     <span className="text-menu-muted">Service Charge ({settings.serviceChargePercentage}%)</span>
                     <span className="text-menu-primary font-medium">
-                      <span className="text-menu-muted/60">₹</span>{serviceCharge.toFixed(2)}
+                      <span className="text-menu-muted/60">₹</span>
+                      <AnimatedPrice value={serviceCharge} className="text-menu-primary" decimals={2} />
                     </span>
                   </div>
                 )}
@@ -349,14 +377,16 @@ export default function CartPage() {
                   <div className="flex justify-between text-sm">
                     <span className="text-menu-muted">GST ({settings.taxPercentage}%)</span>
                     <span className="text-menu-primary font-medium">
-                      <span className="text-menu-muted/60">₹</span>{taxAmount.toFixed(2)}
+                      <span className="text-menu-muted/60">₹</span>
+                      <AnimatedPrice value={taxAmount} className="text-menu-primary" decimals={2} />
                     </span>
                   </div>
                 )}
                 <div className="border-t border-menu-border/30 pt-3 flex justify-between">
                   <span className="font-semibold text-menu-primary">Total</span>
                   <span className="text-lg font-bold text-menu-accent">
-                    <span className="text-menu-accent/60 font-medium">₹</span>{finalTotal.toFixed(2)}
+                    <span className="text-menu-accent/60 font-medium">₹</span>
+                    <AnimatedPrice value={finalTotal} className="text-menu-accent" decimals={2} />
                   </span>
                 </div>
               </div>
@@ -413,6 +443,16 @@ export default function CartPage() {
           handleSubmitOrder("counter");
         }}
         finalTotal={finalTotal}
+      />
+
+      {/* Feature 4: Order Success Modal */}
+      <OrderSuccessModal
+        open={showSuccessModal}
+        orderId={successOrderId}
+        tableLabel={session?.tableLabel}
+        total={successTotal}
+        onContinue={handleSuccessContinue}
+        onViewOrder={handleSuccessViewOrder}
       />
 
       <div className="mt-16">

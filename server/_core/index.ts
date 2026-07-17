@@ -5,6 +5,7 @@ import net from "net";
 import { serveStatic, setupVite } from "./vite";
 import paymentRoutes from "./paymentRoutes";
 import authRoutes from "./authRoutes";
+import printRoutes from "./printRoutes";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,7 @@ async function startServer() {
   // Payment routes (must be before Vite catch-all)
   app.use(paymentRoutes);
   app.use(authRoutes);
+  app.use(printRoutes);
 
   // Development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
