@@ -53,6 +53,7 @@ export default function AdminPanel() {
   const [printSessionId, setPrintSessionId] = useState<number | null>(null);
   const [lastOrderTime, setLastOrderTime] = useState<number>(0);
   const [selectedQueueOrder, setSelectedQueueOrder] = useState<any | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ itemId: number; itemName: string; action: 'serve' | 'undo' } | null>(null);
   const [showQueueDetail, setShowQueueDetail] = useState(false);
 
   // Edit States
@@ -807,6 +808,21 @@ export default function AdminPanel() {
     onError: (error: any) => toast.error(error.message),
   });
 
+  // Undo mark an individual orderItem as delivered
+  const undoMarkItemDeliveredMutation = useMutation({
+    mutationFn: async ({ itemId, orderId }: { itemId: number; orderId: number }) => {
+      const { error } = await supabase.from('orderItems').update({ delivered: false }).eq('id', itemId);
+      if (error) throw error;
+      // Also revert order status back to 'pending' if it was auto-delivered
+      await supabase.from('orders').update({ status: 'pending' }).eq('id', orderId).eq('status', 'delivered');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['activeTables'] });
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
   // Seed 12 default tables if none exist
   useEffect(() => {
     if (tablesData && tablesData.length === 0 && !seedingRef.current && !isTablesLoading) {
@@ -1448,25 +1464,9 @@ export default function AdminPanel() {
                             checked={item.delivered}
                             onChange={() => {
                               if (!item.delivered) {
-                                const currentOrderId = selectedQueueOrder?.id;
-                                // Optimistic local update for instant tick
-                                setSelectedQueueOrder((prev: any) => {
-                                  if (!prev) return prev;
-                                  const updatedItems = prev.items.map((it: any) =>
-                                    it.id === item.id ? { ...it, delivered: true } : it
-                                  );
-                                  // Check if all delivered → auto-close after brief delay
-                                  const allDone = updatedItems.every((it: any) => it.delivered);
-                                  if (allDone && currentOrderId) {
-                                    setTimeout(() => {
-                                      markDeliveredMutation.mutate(currentOrderId);
-                                      setShowQueueDetail(false);
-                                      setSelectedQueueOrder(null);
-                                    }, 400);
-                                  }
-                                  return { ...prev, items: updatedItems };
-                                });
-                                markItemDeliveredMutation.mutate({ itemId: item.id, orderId: currentOrderId });
+                                setConfirmDialog({ itemId: item.id, itemName: `${item.quantity}× ${item.menuItemName}`, action: 'serve' });
+                              } else {
+                                setConfirmDialog({ itemId: item.id, itemName: `${item.quantity}× ${item.menuItemName}`, action: 'undo' });
                               }
                             }}
                           />
@@ -1502,6 +1502,60 @@ export default function AdminPanel() {
                       >
                         <CheckCircle className="w-4 h-4" />
                         All Delivered
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {confirmDialog && (
+                  <div className="absolute inset-0 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center z-50 rounded-lg p-6">
+                    <p className="text-base font-semibold text-slate-900 text-center mb-1">
+                      {confirmDialog.action === 'serve' ? 'Confirm served' : 'Undo served'}
+                    </p>
+                    <p className="text-sm text-slate-500 text-center mb-6">"{confirmDialog.itemName}"</p>
+                    <div className="flex gap-3 w-full">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => setConfirmDialog(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        className={`flex-1 ${confirmDialog.action === 'serve' ? 'btn-sweep-green' : 'btn-sweep'}`}
+                        onClick={() => {
+                          const item = confirmDialog;
+                          setConfirmDialog(null);
+                          const currentOrderId = selectedQueueOrder?.id;
+                          if (item.action === 'serve') {
+                            setSelectedQueueOrder((prev: any) => {
+                              if (!prev) return prev;
+                              const updatedItems = prev.items.map((it: any) =>
+                                it.id === item.itemId ? { ...it, delivered: true } : it
+                              );
+                              const allDone = updatedItems.every((it: any) => it.delivered);
+                              if (allDone && currentOrderId) {
+                                setTimeout(() => {
+                                  markDeliveredMutation.mutate(currentOrderId);
+                                  setShowQueueDetail(false);
+                                  setSelectedQueueOrder(null);
+                                }, 400);
+                              }
+                              return { ...prev, items: updatedItems };
+                            });
+                            markItemDeliveredMutation.mutate({ itemId: item.itemId, orderId: currentOrderId });
+                          } else {
+                            setSelectedQueueOrder((prev: any) => {
+                              if (!prev) return prev;
+                              const updatedItems = prev.items.map((it: any) =>
+                                it.id === item.itemId ? { ...it, delivered: false } : it
+                              );
+                              return { ...prev, items: updatedItems };
+                            });
+                            undoMarkItemDeliveredMutation.mutate({ itemId: item.itemId, orderId: currentOrderId });
+                          }
+                        }}
+                      >
+                        {confirmDialog.action === 'serve' ? 'Confirm' : 'Yes, Undo'}
                       </Button>
                     </div>
                   </div>
