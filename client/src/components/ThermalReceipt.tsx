@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Printer } from "lucide-react";
+import { DEFAULT_PRINTER_PORT } from "@/lib/constants";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import "./ThermalReceipt.css";
 
 type ThermalReceiptProps = {
@@ -21,6 +23,8 @@ type ThermalReceiptProps = {
     label: string;
     sessionId: number;
     subtotal: number;
+    serviceCharge: number;
+    taxAmount: number;
     finalTotal: number;
     orders: Array<{
       orderNumber: number | null;
@@ -38,18 +42,21 @@ type ThermalReceiptProps = {
   onClose: () => void;
 };
 
-export default function ThermalReceipt({ data, table, printerIp, printerPort = 9100, onClose }: ThermalReceiptProps) {
+export default function ThermalReceipt({ data, table, printerIp, printerPort = DEFAULT_PRINTER_PORT, onClose }: ThermalReceiptProps) {
+  const { fmtPrice } = useFormatCurrency();
   const [printing, setPrinting] = useState(false);
   const [printStatus, setPrintStatus] = useState<"idle" | "success" | "error">("idle");
 
   const biz = data;
   const allItems = table.orders.flatMap((o) => o.items);
   const subtotal = table.subtotal;
+  const serviceCharge = table.serviceCharge || 0;
   const gstEnabled = biz?.gstEnabled && (biz.gstRate || 0) > 0;
   const gstHalf = gstEnabled ? (biz!.gstRate / 2) : 0;
-  const cgst = gstEnabled ? subtotal * (biz!.gstRate / 200) : 0;
-  const sgst = gstEnabled ? subtotal * (biz!.gstRate / 200) : 0;
-  const grandTotal = gstEnabled ? subtotal + cgst + sgst : subtotal;
+  const taxableBase = subtotal + serviceCharge;
+  const cgst = gstEnabled ? taxableBase * (biz!.gstRate / 200) : 0;
+  const sgst = gstEnabled ? taxableBase * (biz!.gstRate / 200) : 0;
+  const grandTotal = taxableBase + cgst + sgst;
 
   const orderNumbers = table.orders
     .filter((o) => o.orderNumber)
@@ -101,6 +108,7 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = 9
               price: item.priceAtOrderTime,
             })),
             subtotal,
+            serviceCharge,
             gstEnabled,
             gstHalf: gstHalf,
             cgst,
@@ -115,7 +123,7 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = 9
       if (!res.ok) throw new Error(data.error || "Print failed");
       setPrintStatus("success");
       setTimeout(() => setPrintStatus("idle"), 3000);
-    } catch (err: any) {
+    } catch {
       setPrintStatus("error");
       setTimeout(() => setPrintStatus("idle"), 5000);
     } finally {
@@ -129,7 +137,7 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = 9
         <div className="receipt-content" id={`thermal-receipt-${table.sessionId}`}>
           {biz?.logoUrl && (
             <div className="receipt-logo">
-              <img src={biz.logoUrl} alt="Logo" />
+              <img src={biz.logoUrl} alt="Logo" width={120} height={40} loading="lazy" />
             </div>
           )}
           <h2 className="receipt-title">{biz?.restaurantName || "Restaurant"}</h2>
@@ -176,7 +184,7 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = 9
             <div key={i} className="receipt-item">
               <span className="receipt-item-name">{item.menuItemName}</span>
               <span className="receipt-item-qty">{item.quantity}</span>
-              <span className="receipt-item-price">₹{(item.priceAtOrderTime * item.quantity).toFixed(2)}</span>
+              <span className="receipt-item-price">{fmtPrice(item.priceAtOrderTime * item.quantity)}</span>
             </div>
           ))}
 
@@ -184,24 +192,30 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = 9
 
           <div className="receipt-total-row">
             <span>Subtotal</span>
-            <span>₹{subtotal.toFixed(2)}</span>
+            <span>{fmtPrice(subtotal)}</span>
           </div>
+          {serviceCharge > 0 && (
+            <div className="receipt-total-row">
+              <span>Service Charge</span>
+              <span>{fmtPrice(serviceCharge)}</span>
+            </div>
+          )}
           {gstEnabled && (
             <>
               <div className="receipt-total-row">
                 <span>CGST ({gstHalf}%)</span>
-                <span>₹{cgst.toFixed(2)}</span>
+                <span>{fmtPrice(cgst)}</span>
               </div>
               <div className="receipt-total-row">
                 <span>SGST ({gstHalf}%)</span>
-                <span>₹{sgst.toFixed(2)}</span>
+                <span>{fmtPrice(sgst)}</span>
               </div>
             </>
           )}
           <div className="receipt-divider-thin" />
           <div className="receipt-grand-total">
             <span>Grand Total</span>
-            <span>₹{grandTotal.toFixed(2)}</span>
+            <span>{fmtPrice(grandTotal)}</span>
           </div>
 
           {paymentMethods.length > 0 && (

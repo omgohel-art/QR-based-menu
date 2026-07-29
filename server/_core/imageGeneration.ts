@@ -16,6 +16,7 @@
  *   });
  */
 import { storagePut } from "server/storage";
+import { processImage } from "./imageProcessor";
 import { ENV } from "./env";
 
 // Default model for generated sites. "MODEL_GPT_IMAGE_2" is the forge images.v1
@@ -38,6 +39,11 @@ export type GenerateImageOptions = {
 
 export type GenerateImageResponse = {
   url?: string;
+  largeUrl?: string;
+  mediumUrl?: string;
+  thumbnailUrl?: string;
+  width?: number;
+  height?: number;
 };
 
 export async function generateImage(
@@ -95,14 +101,25 @@ export async function generateImage(
   const base64Data = result.image.b64Json;
   const buffer = Buffer.from(base64Data, "base64");
 
-  // Save to S3
-  const { url } = await storagePut(
-    `generated/${Date.now()}.png`,
-    buffer,
-    result.image.mimeType
-  );
+  // Process with sharp: compress + WebP + generate responsive sizes
+  const processed = await processImage(buffer);
+  const timestamp = Date.now();
+  const baseKey = `generated/${timestamp}`;
+
+  const [origUrl] = await Promise.all([
+    storagePut(`${baseKey}.webp`, processed.original, "image/webp"),
+    storagePut(`${baseKey}_large.webp`, processed.large, "image/webp"),
+    storagePut(`${baseKey}_medium.webp`, processed.medium, "image/webp"),
+    storagePut(`${baseKey}_thumb.webp`, processed.thumbnail, "image/webp"),
+  ]);
+
   return {
-    url,
+    url: origUrl.url,
+    largeUrl: origUrl.url.replace(".webp", "_large.webp"),
+    mediumUrl: origUrl.url.replace(".webp", "_medium.webp"),
+    thumbnailUrl: origUrl.url.replace(".webp", "_thumb.webp"),
+    width: processed.originalMeta.width,
+    height: processed.originalMeta.height,
   };
 }
 

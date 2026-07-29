@@ -9,6 +9,7 @@ interface VerifyResponse {
   success: boolean;
   isDuplicate?: boolean;
   orderId?: number;
+  orderNumber?: number;
 }
 
 export async function createRazorpayOrder(amount: number, currency = "INR", receipt?: string): Promise<CreateOrderResponse> {
@@ -34,10 +35,19 @@ export function openRazorpayCheckout(options: {
   prefill: { contact?: string; email?: string };
   handler: (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => void;
   modal: { ondismiss: () => void };
+  onError?: (message: string) => void;
 }): void {
-  const rzp = new (window as any).Razorpay(options);
+  const rzp = new (window as any).Razorpay({
+    ...options,
+    handler: (response: any) => {
+      options.handler(response);
+    },
+  });
   rzp.on("payment.failed", (response: any) => {
-    throw new Error(response.error?.description || "Payment failed");
+    rzp.close();
+    options.modal.ondismiss();
+    const msg = response.error?.description || "Payment failed";
+    options.onError?.(msg);
   });
   rzp.open();
 }
@@ -47,10 +57,11 @@ export async function verifyPayment(payload: {
   razorpay_payment_id: string;
   razorpay_signature: string;
   tableCode: string;
-  items: Array<{ menuItemId: number; quantity: number }>;
+  items: Array<{ menuItemId: number; quantity: number; notes?: string | null }>;
   submissionId: string;
   deviceToken: string;
-  settings: { serviceChargePercentage: number; taxPercentage: number };
+  customerName?: string;
+  customerPhone?: string;
 }): Promise<VerifyResponse> {
   const res = await fetch("/api/payment/verify", {
     method: "POST",

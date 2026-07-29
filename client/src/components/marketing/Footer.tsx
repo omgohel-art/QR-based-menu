@@ -29,12 +29,24 @@ export default function Footer({ variant = "default" }: FooterProps) {
   const isMenu = variant === "menu";
   const isAdmin = variant === "admin";
 
+  if (isAdmin) {
+    return (
+      <footer className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+        <div className="container py-6 flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} MAMA Cafe. All rights reserved.</span>
+          <div className="flex items-center gap-4">
+            <Link href="/privacy" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Privacy</Link>
+            <Link href="/terms" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Terms</Link>
+          </div>
+        </div>
+      </footer>
+    );
+  }
+
   return (
     <footer className={cn(
       "border-t",
-      isMenu ? "border-menu-border/40 bg-menu-card" :
-      isAdmin ? "border-slate-200 bg-white" :
-      "border-border/40 bg-muted/30"
+      isMenu ? "border-menu-border/40 bg-menu-card" : "border-border/40 bg-muted/30"
     )}>
       <div className="container py-14 md:py-20">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 md:gap-12">
@@ -109,9 +121,7 @@ export default function Footer({ variant = "default" }: FooterProps) {
 
       <div className={cn(
         "border-t",
-        isMenu ? "border-menu-border/40" :
-        isAdmin ? "border-slate-200" :
-        "border-border/40"
+        isMenu ? "border-menu-border/40" : "border-border/40"
       )}>
         <div className="container py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className={cn(

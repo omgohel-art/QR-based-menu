@@ -1,9 +1,11 @@
+import { resendBreaker, fire } from "./circuitBreaker";
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const FROM_EMAIL = process.env.FROM_EMAIL || "MAMA Cafe <onboarding@resend.dev>";
 
 export async function sendOtpEmail(email: string, otp: string): Promise<void> {
   if (!RESEND_API_KEY) {
-    console.log(`[OTP] Email not configured. OTP for ${email}: ${otp}`);
+    console.log(`[OTP] Email not configured. Would send to ${email}`);
     return;
   }
 
@@ -16,20 +18,27 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
     </div>
   `;
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ from: FROM_EMAIL, to: email, subject: "Password Reset OTP - MAMA Cafe", html }),
+  const res = await fire(resendBreaker, async () => {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from: FROM_EMAIL, to: email, subject: "Password Reset OTP - MAMA Cafe", html }),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      const sanitized = errText.replace(/re_[a-zA-Z0-9]{10,}/g, "re_[REDACTED]");
+      throw new Error(`Send failed: ${sanitized}`);
+    }
+    return r;
+  }).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : "Resend unavailable";
+    console.error(`[OTP] Email send failed: ${msg}`);
+    return null;
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error(`[OTP] Email send failed: ${err}`);
-    throw new Error("Failed to send email");
-  }
-
+  if (!res) throw new Error("Failed to send email");
   console.log(`[OTP] Email sent to ${email}`);
 }

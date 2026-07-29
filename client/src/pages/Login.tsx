@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { Eye, EyeOff, LogIn, UtensilsCrossed } from "lucide-react";
-import "@/components/LoadingRipple.css";
+import { Eye, EyeOff, LogIn } from "lucide-react";
+import { FullPageSpinner } from "@/components/Skeletons";
 
 export default function Login() {
   const { login, user, profile, loading } = useAuth();
@@ -12,22 +12,22 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [kitchenMode, setKitchenMode] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      if (profile?.must_change_password) {
+        navigate("/force-change-password", { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
+    }
+  }, [user, profile, navigate]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="ld-ripple"><div /><div /></div>
-      </div>
-    );
+    return <FullPageSpinner />;
   }
 
   if (user) {
-    if (profile?.must_change_password) {
-      navigate("/force-change-password", { replace: true });
-    } else {
-      navigate("/", { replace: true });
-    }
     return null;
   }
 
@@ -39,17 +39,11 @@ export default function Login() {
       const result = await login(email, password);
       if (result.error) {
         setError(result.error);
-        setIsSubmitting(false);
-      } else {
-        if (kitchenMode) {
-          localStorage.setItem("kitchenMode", "true");
-          navigate("/", { replace: true });
-        }
       }
     } catch {
       setError("Network error. Please try again.");
-      setIsSubmitting(false);
     }
+    setIsSubmitting(false);
   };
 
   return (
@@ -57,10 +51,10 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-500 flex items-center justify-center mb-4 shadow-lg shadow-blue-500/25">
-            {kitchenMode ? <UtensilsCrossed className="w-7 h-7 text-white" /> : <span className="text-white font-bold text-xl">M</span>}
+            <span className="text-white font-bold text-xl">M</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">{kitchenMode ? "Kitchen Panel" : "MAMA Cafe"}</h1>
-          <p className="text-sm text-slate-500 mt-1">{kitchenMode ? "Kitchen staff login" : "Sign in to your dashboard"}</p>
+          <h1 className="text-2xl font-bold text-slate-900">MAMA Cafe</h1>
+          <p className="text-sm text-slate-500 mt-1">Sign in to your dashboard</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 space-y-5">
@@ -135,12 +129,6 @@ export default function Login() {
         <p className="text-center text-xs text-slate-400 mt-6">
           MAMA Cafe — Restaurant Management System
         </p>
-        <button
-          onClick={() => { setKitchenMode(!kitchenMode); setError(""); }}
-          className="mt-3 w-full text-center text-sm text-amber-600 hover:text-amber-700 hover:underline"
-        >
-          {kitchenMode ? "Back to Admin Login" : "Access to kitchen panel"}
-        </button>
       </div>
     </div>
   );

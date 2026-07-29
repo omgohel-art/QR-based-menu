@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -16,17 +16,24 @@ export default function ForceChangePassword() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!user) {
+      navigate("/login", { replace: true });
+    }
+  }, [user, navigate]);
+
   if (!user) {
-    navigate("/login", { replace: true });
     return null;
   }
+
+  const requirementsMet = newPassword.length >= 8 && /[a-z]/.test(newPassword) && /[A-Z]/.test(newPassword) && /[0-9]/.test(newPassword) && /[^a-zA-Z0-9]/.test(newPassword);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters");
+    if (!requirementsMet) {
+      setError("Password does not meet all requirements");
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -106,15 +113,32 @@ export default function ForceChangePassword() {
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Min. 8 characters"
                 required
-                minLength={8}
                 className="w-full h-11 px-4 pr-11 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all"
               />
               <button type="button" onClick={() => setShowNew(!showNew)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                 {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            {newPassword.length > 0 && newPassword.length < 8 && (
-              <p className="text-xs text-red-500 mt-1">Password must be at least 8 characters</p>
+            {newPassword && (
+              <div className="mt-2 space-y-0.5">
+                {(() => {
+                  const reqs = [
+                    { label: "Minimum 8 characters", met: newPassword.length >= 8 },
+                    { label: "One lowercase letter", met: /[a-z]/.test(newPassword) },
+                    { label: "One uppercase letter", met: /[A-Z]/.test(newPassword) },
+                    { label: "One number", met: /[0-9]/.test(newPassword) },
+                    { label: "One symbol", met: /[^a-zA-Z0-9]/.test(newPassword) },
+                  ];
+                  const allMet = reqs.every(r => r.met);
+                  if (allMet) return null;
+                  return reqs.map((req) => (
+                    <li key={req.label} className={`text-xs flex items-center gap-1.5 list-none ${req.met ? "text-green-600" : "text-slate-400"}`}>
+                      <span className={req.met ? "text-green-500" : "text-slate-300"}>{req.met ? "\u2713" : "\u2022"}</span>
+                      {req.label}
+                    </li>
+                  ));
+                })()}
+              </div>
             )}
           </div>
 
@@ -140,7 +164,7 @@ export default function ForceChangePassword() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !currentPassword || !newPassword || !confirmPassword || !requirementsMet || newPassword !== confirmPassword}
             className="w-full h-11 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25"
           >
             {isSubmitting ? (

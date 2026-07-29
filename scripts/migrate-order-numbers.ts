@@ -58,8 +58,7 @@ async function run() {
     console.log(`Backfilling ${ordersWithoutNumber.length} orders...`);
     for (let i = 0; i < ordersWithoutNumber.length; i++) {
       const order = ordersWithoutNumber[i];
-      const orderNumber = i + 1;
-      await supabase.from("orders").update({ orderNumber }).eq("id", order!.id);
+      await supabase.from("orders").update({ orderNumber: i + 1 }).eq("id", order.id);
     }
     console.log("✓ Backfilled existing orders");
   }

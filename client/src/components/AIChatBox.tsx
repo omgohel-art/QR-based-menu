@@ -23,14 +23,24 @@ export type AIChatBoxProps = {
 
   /**
    * Callback when user sends a message.
-   * Typically you'll call a tRPC mutation here to invoke the LLM.
+   * Typically you'll call a streaming fetch here.
    */
   onSendMessage: (content: string) => void;
 
   /**
-   * Whether the AI is currently generating a response
+   * Whether the AI is currently generating a response (non-streaming loading)
    */
   isLoading?: boolean;
+
+  /**
+   * Whether the AI is currently streaming a response token by token
+   */
+  isStreaming?: boolean;
+
+  /**
+   * The content being streamed right now (updates every token)
+   */
+  streamingContent?: string;
 
   /**
    * Placeholder text for the input field
@@ -63,10 +73,10 @@ export type AIChatBoxProps = {
  * A ready-to-use AI chat box component that integrates with the LLM system.
  *
  * Features:
- * - Matches server-side Message interface for seamless integration
+ * - Streaming: renders tokens as they arrive via SSE
+ * - Typing indicator with bouncing dots while waiting for first token
  * - Markdown rendering with Streamdown
  * - Auto-scrolls to latest message
- * - Loading states
  * - Uses global theme colors from index.css
  *
  * @example
@@ -75,36 +85,43 @@ export type AIChatBoxProps = {
  *   const [messages, setMessages] = useState<Message[]>([
  *     { role: "system", content: "You are a helpful assistant." }
  *   ]);
+ *   const [isStreaming, setIsStreaming] = useState(false);
+ *   const [streamingContent, setStreamingContent] = useState("");
  *
- *   const chatMutation = trpc.ai.chat.useMutation({
- *     onSuccess: (response) => {
- *       // Assuming your tRPC endpoint returns the AI response as a string
- *       setMessages(prev => [...prev, {
- *         role: "assistant",
- *         content: response
- *       }]);
- *     },
- *     onError: (error) => {
- *       console.error("Chat error:", error);
- *       // Optionally show error message to user
- *     }
- *   });
- *
- *   const handleSend = (content: string) => {
+ *   const handleSend = async (content: string) => {
  *     const newMessages = [...messages, { role: "user", content }];
  *     setMessages(newMessages);
- *     chatMutation.mutate({ messages: newMessages });
+ *     setIsStreaming(true);
+ *     setStreamingContent("");
+ *
+ *     const res = await fetch("/api/chat/stream", {
+ *       method: "POST",
+ *       headers: { "Content-Type": "application/json" },
+ *       body: JSON.stringify({ messages: newMessages }),
+ *     });
+ *
+ *     const reader = res.body.getReader();
+ *     const decoder = new TextDecoder();
+ *     let full = "";
+ *
+ *     while (true) {
+ *       const { done, value } = await reader.read();
+ *       if (done) break;
+ *       // Parse SSE lines, accumulate tokens...
+ *       full += token;
+ *       setStreamingContent(full);
+ *     }
+ *
+ *     setMessages([...newMessages, { role: "assistant", content: full }]);
+ *     setIsStreaming(false);
  *   };
  *
  *   return (
  *     <AIChatBox
  *       messages={messages}
  *       onSendMessage={handleSend}
- *       isLoading={chatMutation.isPending}
- *       suggestedPrompts={[
- *         "Explain quantum computing",
- *         "Write a hello world in Python"
- *       ]}
+ *       isStreaming={isStreaming}
+ *       streamingContent={streamingContent}
  *     />
  *   );
  * };
@@ -114,6 +131,8 @@ export function AIChatBox({
   messages,
   onSendMessage,
   isLoading = false,
+  isStreaming = false,
+  streamingContent = "",
   placeholder = "Type your message...",
   className,
   height = "600px",
@@ -125,6 +144,8 @@ export function AIChatBox({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputAreaRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const isGenerating = isLoading || isStreaming;
 
   // Filter out system messages
   const displayMessages = messages.filter((msg) => msg.role !== "system");
@@ -165,10 +186,17 @@ export function AIChatBox({
     }
   };
 
+  // Auto-scroll during streaming
+  useEffect(() => {
+    if (isStreaming) {
+      scrollToBottom();
+    }
+  }, [streamingContent, isStreaming]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedInput = input.trim();
-    if (!trimmedInput || isLoading) return;
+    if (!trimmedInput || isGenerating) return;
 
     onSendMessage(trimmedInput);
     setInput("");
@@ -212,7 +240,7 @@ export function AIChatBox({
                     <button
                       key={index}
                       onClick={() => onSendMessage(prompt)}
-                      disabled={isLoading}
+                      disabled={isGenerating}
                       className="rounded-lg border border-border bg-card px-4 py-2 text-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {prompt}
@@ -229,7 +257,7 @@ export function AIChatBox({
                 // Apply min-height to last message only if NOT loading (when loading, the loading indicator gets it)
                 const isLastMessage = index === displayMessages.length - 1;
                 const shouldApplyMinHeight =
-                  isLastMessage && !isLoading && minHeightForLastMessage > 0;
+                  isLastMessage && !isGenerating && minHeightForLastMessage > 0;
 
                 return (
                   <div
@@ -280,7 +308,7 @@ export function AIChatBox({
                 );
               })}
 
-              {isLoading && (
+              {isGenerating && (
                 <div
                   className="flex items-start gap-3"
                   style={
@@ -292,8 +320,18 @@ export function AIChatBox({
                   <div className="size-8 shrink-0 mt-1 rounded-full bg-primary/10 flex items-center justify-center">
                     <Sparkles className="size-4 text-primary" />
                   </div>
-                  <div className="rounded-lg bg-muted px-4 py-2.5">
-                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2.5">
+                    {isStreaming && streamingContent ? (
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{streamingContent}</Streamdown>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 py-1">
+                        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.3s]" />
+                        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.15s]" />
+                        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce" />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -320,10 +358,10 @@ export function AIChatBox({
         <Button
           type="submit"
           size="icon"
-          disabled={!input.trim() || isLoading}
+          disabled={!input.trim() || isGenerating}
           className="shrink-0 h-[38px] w-[38px]"
         >
-          {isLoading ? (
+          {isGenerating ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
             <Send className="size-4" />

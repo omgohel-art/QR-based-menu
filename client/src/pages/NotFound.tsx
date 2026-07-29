@@ -2,12 +2,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertCircle, Home } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function NotFound() {
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
 
   const handleGoHome = () => {
-    setLocation("/");
+    setLocation(user ? "/" : "/login");
   };
 
   return (

@@ -5,9 +5,33 @@ import type { User } from "@supabase/supabase-js";
 interface UserProfile {
   id: number;
   auth_user_id: string;
+  profile_image_url: string | null;
+  name: string | null;
+  phone: string | null;
+  language: string | null;
+  timezone: string | null;
+  last_login_at: string | null;
   restaurant_id: number | null;
   role: string;
   must_change_password: boolean;
+  employee_id: string | null;
+  department: string | null;
+  branch: string | null;
+  shift: string | null;
+  shift_timing: string | null;
+  reporting_manager: string | null;
+  employment_status: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_phone: string | null;
+  emergency_contact_relationship: string | null;
+  notif_order: boolean | null;
+  notif_system: boolean | null;
+  notif_email: boolean | null;
+  attendance_clock_in: string | null;
+  attendance_clock_out: string | null;
+  attendance_date: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface AuthContextType {
@@ -17,6 +41,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   updatePassword: (password: string, setMustChangeFalse?: boolean) => Promise<{ error?: string }>;
+  updateProfile: (updates: Partial<Pick<UserProfile, "profile_image_url" | "name" | "phone" | "language" | "timezone" | "notif_order" | "notif_system" | "notif_email">>) => Promise<{ error?: string }>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -43,20 +68,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, fetchProfile]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        fetchProfile(u.id);
+        await fetchProfile(u.id);
+      } else {
+        setProfile(null);
       }
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const u = session?.user ?? null;
       setUser(u);
       if (u) {
-        fetchProfile(u.id);
+        await fetchProfile(u.id);
       } else {
         setProfile(null);
       }
@@ -68,8 +95,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
+    const u = (await supabase.auth.getSession()).data.session?.user;
+    if (u) {
+      await fetchProfile(u.id);
+      await supabase.from("user_profiles").update({ last_login_at: new Date().toISOString() }).eq("auth_user_id", u.id);
+    }
     return {};
-  }, []);
+  }, [fetchProfile]);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -90,8 +122,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {};
   }, [user]);
 
+  const updateProfile = useCallback(async (updates: Partial<Pick<UserProfile, "profile_image_url" | "name" | "phone" | "language" | "timezone" | "notif_order" | "notif_system" | "notif_email">>) => {
+    if (!user) return { error: "Not authenticated" };
+    const { error } = await supabase
+      .from("user_profiles")
+      .update(updates)
+      .eq("auth_user_id", user.id);
+    if (error) return { error: error.message };
+    await refreshProfile();
+    return {};
+  }, [user, refreshProfile]);
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, logout, updatePassword, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, login, logout, updatePassword, updateProfile, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

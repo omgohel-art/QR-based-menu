@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { ShieldCheck, ArrowLeft } from "lucide-react";
 
@@ -12,8 +12,13 @@ export default function VerifyOTP() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
 
+  useEffect(() => {
+    if (!email) {
+      navigate("/forgot-password-otp", { replace: true });
+    }
+  }, [email, navigate]);
+
   if (!email) {
-    navigate("/forgot-password-otp", { replace: true });
     return null;
   }
 

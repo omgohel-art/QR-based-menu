@@ -1,55 +1,69 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "system";
+type ResolvedTheme = "light" | "dark";
 
 interface ThemeContextType {
   theme: Theme;
-  toggleTheme?: () => void;
-  switchable: boolean;
+  setTheme: (theme: Theme) => void;
+  resolvedTheme: ResolvedTheme;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-interface ThemeProviderProps {
-  children: React.ReactNode;
-  defaultTheme?: Theme;
-  switchable?: boolean;
-}
-
-export function ThemeProvider({
-  children,
-  defaultTheme = "light",
-  switchable = false,
-}: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (switchable) {
-      const stored = localStorage.getItem("theme");
-      return (stored as Theme) || defaultTheme;
-    }
-    return defaultTheme;
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const stored = localStorage.getItem("theme");
+    return (stored as Theme) || "light";
   });
 
-  useEffect(() => {
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light");
+
+  const applyTheme = useCallback((t: Theme) => {
     const root = document.documentElement;
-    if (theme === "dark") {
+    let resolved: ResolvedTheme;
+    if (t === "system") {
+      resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    } else {
+      resolved = t;
+    }
+    if (resolved === "dark") {
       root.classList.add("dark");
     } else {
       root.classList.remove("dark");
     }
+    setResolvedTheme(resolved);
+  }, []);
 
-    if (switchable) {
-      localStorage.setItem("theme", theme);
-    }
-  }, [theme, switchable]);
+  const setTheme = useCallback((t: Theme) => {
+    localStorage.setItem("theme", t);
+    setThemeState(t);
+    applyTheme(t);
+  }, [applyTheme]);
 
-  const toggleTheme = switchable
-    ? () => {
-        setTheme(prev => (prev === "light" ? "dark" : "light"));
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme, applyTheme]);
+
+  useEffect(() => {
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => applyTheme("system");
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [theme, applyTheme]);
+
+  useEffect(() => {
+    supabase.from("businessSettings").select("accent_color").single().then(({ data }) => {
+      if (data?.accent_color) {
+        document.documentElement.style.setProperty("--accent-color", data.accent_color);
       }
-    : undefined;
+    });
+  }, []);
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, switchable }}>
+    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
       {children}
     </ThemeContext.Provider>
   );

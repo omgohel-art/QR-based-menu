@@ -8,7 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import ImageUpload from "@/components/ImageUpload";
 import { toast } from "sonner";
-import { Building2, Receipt, FileText, Store, Loader2, Printer } from "lucide-react";
+import { Building2, Receipt, FileText, Store, Loader2, Printer, Smartphone, Bell } from "lucide-react";
+import { DEFAULT_PRINTER_PORT } from "@/lib/constants";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useSoundSettings } from "@/contexts/SoundSettingsContext";
+import { notificationSound } from "@/services/notificationSound";
 
 const GST_RATES = [5, 12, 18, 28];
 
@@ -42,14 +46,19 @@ type BusinessData = {
   footerMessage: string;
   printerIp: string;
   printerPort: number;
+  upiId: string;
   tagline: string;
   brandDescription: string;
   sinceYear: number | null;
   averageRating: number | null;
+  serviceChargePercentage: number;
+  notifEnabled: boolean;
 };
 
 export default function BusinessSettings() {
   const queryClient = useQueryClient();
+  const { fmtPrice } = useFormatCurrency();
+  const { enabled: soundEnabled, volume: soundVolume } = useSoundSettings();
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["businessSettings"],
@@ -82,11 +91,14 @@ export default function BusinessSettings() {
     invoicePrefix: "INV-",
     footerMessage: "",
     printerIp: "",
-    printerPort: 9100,
+    printerPort: DEFAULT_PRINTER_PORT,
+    upiId: "",
     tagline: "",
     brandDescription: "",
     sinceYear: "" as string | number,
     averageRating: "" as string | number,
+    serviceChargePercentage: 0,
+    notifEnabled: true,
   });
 
   const [gstError, setGstError] = useState("");
@@ -110,11 +122,14 @@ export default function BusinessSettings() {
         invoicePrefix: settings.invoicePrefix || "INV-",
         footerMessage: settings.footerMessage || "",
         printerIp: settings.printerIp || "",
-        printerPort: settings.printerPort || 9100,
+        printerPort: settings.printerPort || DEFAULT_PRINTER_PORT,
+        upiId: settings.upiId || "",
         tagline: settings.tagline || "",
         brandDescription: settings.brandDescription || "",
         sinceYear: settings.sinceYear || "",
         averageRating: settings.averageRating || "",
+        serviceChargePercentage: settings.serviceChargePercentage ?? 0,
+        notifEnabled: settings.notifEnabled ?? true,
       });
     }
   }, [settings]);
@@ -124,10 +139,12 @@ export default function BusinessSettings() {
     if (key === "gstNumber") setGstError("");
   };
 
+  const gstDetailsFilled = form.gstNumber.trim().length === 15 && form.gstRate > 0;
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const trimmedGst = form.gstNumber.trim();
-      if (trimmedGst && !validateGST(trimmedGst)) {
+      if (form.gstEnabled && trimmedGst && !validateGST(trimmedGst)) {
         setGstError("Invalid GST Number Format");
         throw new Error("Invalid GST Number Format");
       }
@@ -148,11 +165,14 @@ export default function BusinessSettings() {
         invoicePrefix: form.invoicePrefix.trim() || "INV-",
         footerMessage: form.footerMessage.trim(),
         printerIp: form.printerIp.trim(),
-        printerPort: form.printerPort || 9100,
+        printerPort: form.printerPort || DEFAULT_PRINTER_PORT,
         tagline: form.tagline.trim(),
         brandDescription: form.brandDescription.trim(),
         sinceYear: form.sinceYear ? Number(form.sinceYear) : null,
         averageRating: form.averageRating ? Number(form.averageRating) : null,
+        upiId: form.upiId.trim(),
+        serviceChargePercentage: form.serviceChargePercentage,
+        notifEnabled: form.notifEnabled,
         updatedAt: new Date().toISOString(),
       };
       if (!payload.restaurantName) throw new Error("Restaurant Name is required");
@@ -163,6 +183,8 @@ export default function BusinessSettings() {
       if (!payload.city) throw new Error("City is required");
       if (!payload.state) throw new Error("State is required");
       if (!payload.pincode) throw new Error("Pincode is required");
+      if (payload.gstEnabled && !payload.gstNumber) throw new Error("GST Number is required when GST is enabled");
+      if (payload.gstEnabled && (!payload.gstRate || payload.gstRate <= 0)) throw new Error("GST Rate is required when GST is enabled");
 
       if (settings?.id) {
         const { error } = await supabase
@@ -206,15 +228,26 @@ export default function BusinessSettings() {
   };
 
   const subtotal = previewData.items.reduce((s, i) => s + i.qty * i.price, 0);
-  const gstAmount = form.gstEnabled ? subtotal * (form.gstRate / 100) : 0;
+  const serviceChargeAmount = subtotal * (form.serviceChargePercentage / 100);
+  const gstAmount = form.gstEnabled ? (subtotal + serviceChargeAmount) * (form.gstRate / 100) : 0;
   const cgstAmount = gstAmount / 2;
   const sgstAmount = gstAmount / 2;
-  const grandTotal = subtotal + gstAmount;
+  const grandTotal = subtotal + serviceChargeAmount + gstAmount;
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      <div className="space-y-6">
+        <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200">
+          <div className="h-6 w-40 bg-slate-200 rounded animate-pulse mb-6" />
+          <div className="space-y-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-4 w-24 bg-slate-200 rounded animate-pulse" />
+                <div className="h-10 w-full bg-slate-200 rounded-lg animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -310,12 +343,13 @@ export default function BusinessSettings() {
           <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg">
             <div>
               <Label className="text-base font-medium">GST Enabled</Label>
-              <p className="text-sm text-slate-500 mt-0.5">{form.gstEnabled ? "GST will be added to invoices" : "No GST on invoices"}</p>
+              <p className="text-sm text-slate-500 mt-0.5">{form.gstEnabled ? "GST will be added to invoices" : gstDetailsFilled ? "Toggle to enable GST" : "Fill GST Number and Rate first"}</p>
             </div>
             <button
               type="button"
+              disabled={!gstDetailsFilled}
               onClick={() => updateField("gstEnabled", !form.gstEnabled)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.gstEnabled ? "bg-green-500" : "bg-slate-300"}`}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${!gstDetailsFilled ? "bg-slate-200 cursor-not-allowed opacity-50" : form.gstEnabled ? "bg-green-500" : "bg-slate-300"}`}
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.gstEnabled ? "translate-x-6" : "translate-x-1"}`} />
             </button>
@@ -336,6 +370,18 @@ export default function BusinessSettings() {
                 CGST: {cgst}% &middot; SGST: {sgst}%
               </p>
             )}
+          </div>
+          <div className="space-y-2">
+            <Label>Service Charge (%)</Label>
+            <Input
+              type="number"
+              value={form.serviceChargePercentage}
+              onChange={(e) => updateField("serviceChargePercentage", Number(e.target.value))}
+              placeholder="0"
+              min={0}
+              max={100}
+            />
+            <p className="text-xs text-slate-500">Percentage added to subtotal as service charge</p>
           </div>
         </div>
       </Card>
@@ -373,7 +419,7 @@ export default function BusinessSettings() {
         <div className="border border-slate-200 rounded-lg p-6 bg-white max-w-md mx-auto text-sm">
           <div className="text-center border-b border-slate-200 pb-4 mb-4">
             {form.logoUrl && (
-              <img src={form.logoUrl} alt="Logo" className="h-14 mx-auto mb-2 object-contain" />
+              <img src={form.logoUrl} alt="Logo" width={56} height={56} loading="lazy" className="h-14 mx-auto mb-2 object-contain" />
             )}
             <h3 className="text-lg font-bold text-slate-900">{form.restaurantName || "Restaurant Name"}</h3>
             <p className="text-slate-500 text-xs mt-0.5">{form.address || "Address"}</p>
@@ -403,7 +449,7 @@ export default function BusinessSettings() {
                 <tr key={i} className="border-b border-slate-100">
                   <td className="py-1.5 text-slate-700">{item.name}</td>
                   <td className="py-1.5 text-center text-slate-700">{item.qty}</td>
-                  <td className="py-1.5 text-right text-slate-700">₹{(item.qty * item.price).toFixed(2)}</td>
+                  <td className="py-1.5 text-right text-slate-700">{fmtPrice(item.qty * item.price)}</td>
                 </tr>
               ))}
             </tbody>
@@ -412,29 +458,61 @@ export default function BusinessSettings() {
           <div className="border-t border-slate-200 pt-3 space-y-1 text-xs">
             <div className="flex justify-between text-slate-600">
               <span>Subtotal</span>
-              <span>₹{subtotal.toFixed(2)}</span>
+              <span>{fmtPrice(subtotal)}</span>
             </div>
+            {form.serviceChargePercentage > 0 && (
+              <div className="flex justify-between text-slate-600">
+                <span>Service Charge ({form.serviceChargePercentage}%)</span>
+                <span>{fmtPrice(serviceChargeAmount)}</span>
+              </div>
+            )}
             {form.gstEnabled && (
               <>
                 <div className="flex justify-between text-slate-600">
                   <span>CGST ({cgst}%)</span>
-                  <span>₹{cgstAmount.toFixed(2)}</span>
+                  <span>{fmtPrice(cgstAmount)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>SGST ({sgst}%)</span>
-                  <span>₹{sgstAmount.toFixed(2)}</span>
+                  <span>{fmtPrice(sgstAmount)}</span>
                 </div>
               </>
             )}
             <div className="flex justify-between font-bold text-slate-900 pt-2 border-t border-slate-200">
               <span>Grand Total</span>
-              <span>₹{grandTotal.toFixed(2)}</span>
+              <span>{fmtPrice(grandTotal)}</span>
             </div>
           </div>
 
           {form.footerMessage && (
             <div className="mt-4 pt-3 border-t border-slate-200 text-center">
               <p className="text-xs text-slate-500 whitespace-pre-line">{form.footerMessage}</p>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-4 md:p-6 bg-white">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+          <Smartphone className="w-5 h-5 md:w-6 md:h-6" />
+          UPI Payment
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">Display a UPI QR code on the bill so customers can scan and pay instantly.</p>
+        <div className="space-y-2">
+          <Label>UPI ID</Label>
+          <Input value={form.upiId || ""} onChange={(e) => updateField("upiId", e.target.value)} placeholder="mamacafe@upi" />
+          <p className="text-xs text-slate-500">e.g. name@upi or name@okicici</p>
+          {form.upiId && (
+            <div className="mt-3 p-4 bg-white border border-slate-200 rounded-lg inline-block">
+              <p className="text-xs text-slate-500 mb-2 text-center">UPI QR for {form.upiId}</p>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=${encodeURIComponent(form.upiId)}&pn=${encodeURIComponent(form.restaurantName || "Restaurant")}&cu=INR`}
+                alt="UPI QR Code"
+                width={144}
+                height={144}
+                loading="lazy"
+                className="w-36 h-36 mx-auto"
+              />
             </div>
           )}
         </div>
@@ -453,8 +531,54 @@ export default function BusinessSettings() {
           </div>
           <div className="space-y-2">
             <Label>Printer Port</Label>
-            <Input type="number" value={form.printerPort} onChange={(e) => updateField("printerPort", Number(e.target.value) || 9100)} placeholder="9100" />
-            <p className="text-xs text-slate-500">Default: 9100</p>
+            <Input type="number" value={form.printerPort} onChange={(e) => updateField("printerPort", Number(e.target.value) || DEFAULT_PRINTER_PORT)} placeholder={String(DEFAULT_PRINTER_PORT)} />
+            <p className="text-xs text-slate-500">Default: {DEFAULT_PRINTER_PORT}</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4 md:p-6 bg-white">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+          <Bell className="w-5 h-5 md:w-6 md:h-6" />
+          Notification Settings
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">Configure how staff are notified of new orders.</p>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200">
+            <div>
+              <p className="text-sm font-medium text-slate-900">Order Notifications</p>
+              <p className="text-xs text-slate-500">Play sound and show toast when a new order arrives</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateField("notifEnabled", !form.notifEnabled)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                form.notifEnabled ? "bg-emerald-500" : "bg-slate-300"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                form.notifEnabled ? "translate-x-6" : "translate-x-1"
+              }`} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200">
+            <div>
+              <p className="text-sm font-medium text-slate-900">Test Sound</p>
+              <p className="text-xs text-slate-500">Preview the notification sound</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (soundEnabled) {
+                  notificationSound.play(soundVolume / 100);
+                } else {
+                  notificationSound.play(0.8);
+                }
+              }}
+            >
+              Play
+            </Button>
           </div>
         </div>
       </Card>
@@ -463,7 +587,7 @@ export default function BusinessSettings() {
         <Button
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending}
-          className="w-full md:w-auto btn-sweep font-semibold"
+          className="w-full md:w-auto bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 text-white font-semibold rounded-lg transition-all duration-200"
         >
           {saveMutation.isPending ? (
             <span className="flex items-center gap-2">

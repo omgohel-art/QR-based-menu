@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { ArrowLeft, Lock, Shield, CreditCard } from "lucide-react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import {
   createRazorpayOrder,
   openRazorpayCheckout,
@@ -13,22 +14,35 @@ import {
   loadRazorpayScript,
 } from "@/services/paymentService";
 import Footer from "@/components/marketing/Footer";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface PaymentState {
   tableCode: string;
-  items: Array<{ menuItemId: number; name: string; quantity: number; price: number }>;
+  items: Array<{ menuItemId: number; name: string; quantity: number; price: number; notes?: string | null }>;
   subtotal: number;
   serviceCharge: number;
   taxAmount: number;
   finalTotal: number;
   serviceChargePercentage: number;
-  taxPercentage: number;
+  gstRate: number;
+  gstEnabled: boolean;
+  customerName?: string;
+  customerPhone?: string;
+  savedAt?: number;
 }
+
+const PAYMENT_STATE_TTL = 15 * 60 * 1000;
 
 function getPaymentState(): PaymentState | null {
   try {
     const raw = sessionStorage.getItem("paymentState");
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const state = JSON.parse(raw);
+    if (state.savedAt && Date.now() - state.savedAt > PAYMENT_STATE_TTL) {
+      sessionStorage.removeItem("paymentState");
+      return null;
+    }
+    return state;
   } catch {
     return null;
   }
@@ -42,6 +56,19 @@ export default function PaymentPage() {
   const [paymentState, setPaymentState] = useState<PaymentState | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sdkLoaded, setSdkLoaded] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const { fmtPrice } = useFormatCurrency();
+
+  const { data: bizSettings } = useQuery({
+    queryKey: ["bizSettingsPayment"],
+    queryFn: async () => {
+      const data = await fetch("/api/public/business-settings").then((r) => r.json());
+      return data || null;
+    },
+    staleTime: 300_000,
+  });
+
+  const restaurantName = bizSettings?.restaurantName || "Restaurant";
 
   useEffect(() => {
     if (tableCode) {
@@ -52,6 +79,7 @@ export default function PaymentPage() {
       }
       setPaymentState(state);
     }
+    setChecked(true);
   }, [tableCode, navigate]);
 
   useEffect(() => {
@@ -60,7 +88,9 @@ export default function PaymentPage() {
       .catch((err) => toast.error(err.message));
   }, []);
 
-  const handlePayment = async () => {
+  if (!checked) return null;
+
+  const handleRazorpayPayment = async () => {
     if (!paymentState || !tableCode) return;
     setIsProcessing(true);
 
@@ -71,7 +101,7 @@ export default function PaymentPage() {
         key: orderData.keyId,
         amount: orderData.amount,
         currency: orderData.currency,
-        name: "MAMA Cafe",
+        name: restaurantName,
         description: `Order for Table ${tableCode}`,
         order_id: orderData.razorpayOrderId,
         prefill: {},
@@ -80,11 +110,6 @@ export default function PaymentPage() {
           const deviceToken = nanoid(16);
 
           try {
-            const settingsData = {
-              serviceChargePercentage: paymentState.serviceChargePercentage,
-              taxPercentage: paymentState.taxPercentage,
-            };
-
             const result = await verifyPayment({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
@@ -93,10 +118,12 @@ export default function PaymentPage() {
               items: paymentState.items.map((item) => ({
                 menuItemId: item.menuItemId,
                 quantity: item.quantity,
+                notes: item.notes || null,
               })),
               submissionId,
               deviceToken,
-              settings: settingsData,
+              customerName: paymentState.customerName,
+              customerPhone: paymentState.customerPhone,
             });
 
             if (result.success) {
@@ -105,6 +132,7 @@ export default function PaymentPage() {
               const successState = {
                 tableCode,
                 orderId: result.orderId,
+                orderNumber: result.orderNumber,
                 total: paymentState.finalTotal,
               };
               sessionStorage.setItem("paymentSuccess", JSON.stringify(successState));
@@ -122,12 +150,31 @@ export default function PaymentPage() {
             setIsProcessing(false);
           },
         },
+        onError: (msg) => {
+          toast.error(msg);
+          setIsProcessing(false);
+        },
       });
     } catch (err: any) {
       toast.error(err.message || "Failed to initialize payment");
       setIsProcessing(false);
     }
   };
+
+  if (!tableCode) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-sm space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-red-50 flex items-center justify-center">
+            <Shield className="w-6 h-6 text-red-400" />
+          </div>
+          <p className="text-lg font-semibold text-slate-700">Invalid table</p>
+          <p className="text-sm text-slate-500">Please scan the QR code again</p>
+          <Button onClick={() => navigate("/")} variant="outline" className="rounded-xl">Go Home</Button>
+        </div>
+      </div>
+    );
+  }
 
   if (!paymentState) {
     return (
@@ -163,7 +210,7 @@ export default function PaymentPage() {
           <div className="w-16 h-16 mx-auto rounded-2xl bg-blue-100 flex items-center justify-center mb-4">
             <CreditCard className="w-8 h-8 text-blue-600" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">MAMA Cafe</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{restaurantName}</h1>
           <p className="text-slate-500 mt-1">Complete your payment</p>
         </div>
 
@@ -176,9 +223,12 @@ export default function PaymentPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-slate-900 truncate">{item.name}</p>
                   <p className="text-xs text-slate-500">Qty: {item.quantity}</p>
+                  {item.notes && (
+                    <p className="text-xs text-slate-400 italic truncate">Note: {item.notes}</p>
+                  )}
                 </div>
                 <span className="text-sm font-medium text-slate-900 ml-4">
-                  ₹{(item.price * item.quantity).toFixed(2)}
+                  {fmtPrice(item.price * item.quantity)}
                 </span>
               </div>
             ))}
@@ -187,23 +237,29 @@ export default function PaymentPage() {
           <div className="border-t border-slate-200 pt-3 space-y-1.5">
             <div className="flex justify-between text-sm">
               <span className="text-slate-500">Subtotal</span>
-              <span className="text-slate-700">₹{paymentState.subtotal.toFixed(2)}</span>
+              <span className="text-slate-700">{fmtPrice(paymentState.subtotal)}</span>
             </div>
             {paymentState.serviceCharge > 0 && (
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500">Service Charge ({paymentState.serviceChargePercentage}%)</span>
-                <span className="text-slate-700">₹{paymentState.serviceCharge.toFixed(2)}</span>
+                <span className="text-slate-700">{fmtPrice(paymentState.serviceCharge)}</span>
               </div>
             )}
-            {paymentState.taxAmount > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">GST ({paymentState.taxPercentage}%)</span>
-                <span className="text-slate-700">₹{paymentState.taxAmount.toFixed(2)}</span>
-              </div>
+            {paymentState.gstEnabled && paymentState.taxAmount > 0 && (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">CGST ({paymentState.gstRate / 2}%)</span>
+                  <span className="text-slate-700">{fmtPrice(paymentState.taxAmount / 2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">SGST ({paymentState.gstRate / 2}%)</span>
+                  <span className="text-slate-700">{fmtPrice(paymentState.taxAmount / 2)}</span>
+                </div>
+              </>
             )}
             <div className="flex justify-between border-t border-slate-200 pt-1.5">
               <span className="font-semibold text-slate-900">Grand Total</span>
-              <span className="text-lg font-bold text-blue-600">₹{paymentState.finalTotal.toFixed(2)}</span>
+              <span className="text-lg font-bold text-blue-600">{fmtPrice(paymentState.finalTotal)}</span>
             </div>
           </div>
         </div>
@@ -225,7 +281,7 @@ export default function PaymentPage() {
         </div>
 
         <button
-          onClick={handlePayment}
+          onClick={handleRazorpayPayment}
           disabled={isProcessing || !sdkLoaded}
           className="w-full py-4 px-6 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
         >
@@ -243,7 +299,7 @@ export default function PaymentPage() {
             <>
               <Lock className="w-5 h-5" />
               Pay Securely
-              <span className="text-blue-200 font-normal">₹{paymentState.finalTotal.toFixed(2)}</span>
+              <span className="text-blue-200 font-normal">{fmtPrice(paymentState.finalTotal)}</span>
             </>
           )}
         </button>

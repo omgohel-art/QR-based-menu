@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Shield, Eye, EyeOff, CheckCircle } from "lucide-react";
-import "@/components/LoadingRipple.css";
+import { FullPageSpinner } from "@/components/Skeletons";
 
 export default function ResetPassword() {
   const { user, updatePassword } = useAuth();
@@ -48,12 +48,12 @@ export default function ResetPassword() {
     e.preventDefault();
     setError("");
 
-    if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
     if (newPassword !== confirmPassword) {
       setError("Passwords do not match");
+      return;
+    }
+    if (!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^a-zA-Z0-9]/.test(newPassword)) {
+      setError("Password does not meet requirements");
       return;
     }
 
@@ -73,11 +73,7 @@ export default function ResetPassword() {
   };
 
   if (initializing) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="ld-ripple"><div /><div /></div>
-      </div>
-    );
+    return <FullPageSpinner />;
   }
 
   if (done) {
@@ -127,13 +123,33 @@ export default function ResetPassword() {
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Min. 8 characters"
                 required
-                minLength={8}
                 className="w-full h-11 px-4 pr-11 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
               />
               <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                 {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            {newPassword && (
+              <div className="mt-2 space-y-0.5">
+                {(() => {
+                  const reqs = [
+                    { label: "Minimum 8 characters", met: newPassword.length >= 8 },
+                    { label: "One lowercase letter", met: /[a-z]/.test(newPassword) },
+                    { label: "One uppercase letter", met: /[A-Z]/.test(newPassword) },
+                    { label: "One number", met: /[0-9]/.test(newPassword) },
+                    { label: "One symbol", met: /[^a-zA-Z0-9]/.test(newPassword) },
+                  ];
+                  const allMet = reqs.every(r => r.met);
+                  if (allMet) return null;
+                  return reqs.map((req) => (
+                    <li key={req.label} className={`text-xs flex items-center gap-1.5 list-none ${req.met ? "text-green-600" : "text-slate-400"}`}>
+                      <span className={req.met ? "text-green-500" : "text-slate-300"}>{req.met ? "\u2713" : "\u2022"}</span>
+                      {req.label}
+                    </li>
+                  ));
+                })()}
+              </div>
+            )}
           </div>
 
           <div>
@@ -153,8 +169,8 @@ export default function ResetPassword() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="w-full h-11 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
+            disabled={isSubmitting || !newPassword || !confirmPassword || newPassword.length < 8 || !/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^a-zA-Z0-9]/.test(newPassword) || newPassword !== confirmPassword}
+            className="w-full h-11 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
           >
             {isSubmitting ? (
               <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />

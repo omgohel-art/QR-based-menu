@@ -1,5 +1,6 @@
-import { eq, and, desc, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { eq, and, desc, sql, gte, lte, inArray, lt } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import { InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import {
@@ -12,7 +13,7 @@ import {
   sessionEditLogs,
   orderHistories,
   deviceRateLimits,
-  cafeSettings,
+  feedback,
   Table,
   Session,
   Order,
@@ -22,7 +23,7 @@ import {
   SessionEditLog,
   OrderHistory,
   DeviceRateLimit,
-  CafeSettings,
+  Feedback,
   InsertTable,
   InsertSession,
   InsertOrder,
@@ -32,22 +33,46 @@ import {
   InsertSessionEditLog,
   InsertOrderHistory,
   InsertDeviceRateLimit,
-  InsertCafeSettings,
+  InsertFeedback,
 } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _client: ReturnType<typeof postgres> | null = null;
+let _initPromise: Promise<ReturnType<typeof drizzle> | null> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  if (_db) return _db;
+  if (!process.env.DATABASE_URL) return null;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _client = postgres(process.env.DATABASE_URL!, {
+        idle_timeout: 20,
+        max_lifetime: 300,
+        keep_alive: 30,
+        connect_timeout: 10,
+      });
+      _db = drizzle(_client);
+      return _db;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _client = null;
+      _initPromise = null;
+      return null;
     }
+  })();
+
+  return _initPromise;
+}
+
+export async function resetDb() {
+  if (_client) {
+    try { await _client.end(); } catch {}
+    _client = null;
+    _db = null;
   }
-  return _db;
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -74,7 +99,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       const value = user[field];
       if (value === undefined) return;
       const normalized = value ?? null;
-      values[field] = normalized;
+      (values as any)[field] = normalized;
       updateSet[field] = normalized;
     };
 
@@ -100,7 +125,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = new Date();
     }
 
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
+    await db.insert(users).values(values).onConflictDoUpdate({
+      target: users.openId,
       set: updateSet,
     });
   } catch (error) {
@@ -129,10 +155,9 @@ export async function createTable(data: InsertTable): Promise<Table> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(tables).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(tables).where(eq(tables.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(tables).values(data).returning();
+  if (!created) throw new Error("Failed to create table");
+  return created;
 }
 
 export async function getTableByCode(tableCode: string): Promise<Table | undefined> {
@@ -180,10 +205,9 @@ export async function createSession(tableId: number): Promise<Session> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(sessions).values({ tableId });
-  const id = result[0].insertId as number;
-  const created = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(sessions).values({ tableId }).returning();
+  if (!created) throw new Error("Failed to create session");
+  return created;
 }
 
 export async function getActiveSessionForTable(tableId: number): Promise<Session | undefined> {
@@ -213,6 +237,13 @@ export async function updateSessionLastActivity(sessionId: number): Promise<void
   await db.update(sessions).set({ lastActivityAt: sql`NOW()` }).where(eq(sessions.id, sessionId));
 }
 
+export async function updateSessionSubtotal(sessionId: number, subtotal: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(sessions).set({ subtotal, lastActivityAt: sql`NOW()` }).where(eq(sessions.id, sessionId));
+}
+
 export async function settleSession(
   sessionId: number,
   taxAmount: string,
@@ -224,25 +255,27 @@ export async function settleSession(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const session = await getSessionById(sessionId);
-  if (!session) throw new Error("Session not found");
-  
-  const subtotal = typeof session.subtotal === 'string' ? parseFloat(session.subtotal) : 0;
   const tax = parseFloat(taxAmount);
   const service = parseFloat(serviceCharge);
   const discount = parseFloat(discountAmount);
-  const finalTotal = (subtotal + tax + service - discount).toString();
-  
-  await db.update(sessions).set({
-    status: "settled",
-    taxAmount,
-    serviceCharge,
-    discountAmount,
-    discountReason,
-    finalTotal,
-    settledAt: new Date(),
-    settledBy,
-  }).where(eq(sessions.id, sessionId));
+
+  if (tax < 0 || service < 0 || discount < 0) {
+    throw new Error("Invalid negative values in session settlement");
+  }
+
+  // Use atomic SQL to recalculate finalTotal from current subtotal, avoiding stale reads
+  await db.execute(sql`
+    UPDATE sessions SET
+      status = 'settled',
+      taxAmount = ${taxAmount}::numeric,
+      serviceCharge = ${serviceCharge}::numeric,
+      discountAmount = ${discountAmount}::numeric,
+      discountReason = ${discountReason},
+      finalTotal = GREATEST(0, subtotal::numeric + ${serviceCharge}::numeric + ${taxAmount}::numeric - ${discountAmount}::numeric),
+      settledAt = NOW(),
+      settledBy = ${settledBy}
+    WHERE id = ${sessionId} AND status = 'open'
+  `);
 }
 
 export async function getInactiveSessionsForFlagging(inactivityWindowMinutes: number): Promise<Session[]> {
@@ -270,10 +303,16 @@ export async function createOrder(data: InsertOrder): Promise<Order> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(orders).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(orders).values(data).returning();
+  if (!created) throw new Error("Failed to create order");
+  return created;
+}
+
+export async function getMaxOrderNumber(): Promise<number | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select({ max: sql<number>`max(orderNumber)` }).from(orders);
+  return result[0]?.max ?? null;
 }
 
 export async function checkSubmissionIdExists(submissionId: string): Promise<boolean> {
@@ -305,6 +344,14 @@ export async function getOrderItemsByOrderId(orderId: number): Promise<OrderItem
   if (!db) return [];
   
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+}
+
+export async function getOrderItemById(id: number): Promise<OrderItem | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(orderItems).where(eq(orderItems.id, id)).limit(1);
+  return result[0];
 }
 
 export async function getOrderItemsBySessionId(sessionId: number): Promise<OrderItem[]> {
@@ -342,10 +389,9 @@ export async function createCategory(data: InsertCategory): Promise<Category> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(categories).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(categories).where(eq(categories.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(categories).values(data).returning();
+  if (!created) throw new Error("Failed to create category");
+  return created;
 }
 
 export async function listCategories(): Promise<Category[]> {
@@ -381,10 +427,9 @@ export async function createMenuItem(data: InsertMenuItem): Promise<MenuItem> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(menuItems).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(menuItems).where(eq(menuItems.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(menuItems).values(data).returning();
+  if (!created) throw new Error("Failed to create menu item");
+  return created;
 }
 
 export async function listMenuItems(): Promise<MenuItem[]> {
@@ -424,10 +469,9 @@ export async function createEditLog(data: InsertSessionEditLog): Promise<Session
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(sessionEditLogs).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(sessionEditLogs).where(eq(sessionEditLogs.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(sessionEditLogs).values(data).returning();
+  if (!created) throw new Error("Failed to create edit log");
+  return created;
 }
 
 export async function getEditLogsBySessionId(sessionId: number): Promise<SessionEditLog[]> {
@@ -445,10 +489,9 @@ export async function createOrderHistory(data: InsertOrderHistory): Promise<Orde
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const result = await db.insert(orderHistories).values(data);
-  const id = result[0].insertId as number;
-  const created = await db.select().from(orderHistories).where(eq(orderHistories.id, id)).limit(1);
-  return created[0]!;
+  const [created] = await db.insert(orderHistories).values(data).returning();
+  if (!created) throw new Error("Failed to create order history");
+  return created;
 }
 
 export async function getOrderHistoryBySessionId(sessionId: number): Promise<OrderHistory | undefined> {
@@ -459,11 +502,34 @@ export async function getOrderHistoryBySessionId(sessionId: number): Promise<Ord
   return result[0];
 }
 
-export async function listOrderHistory(limit: number = 50, offset: number = 0): Promise<OrderHistory[]> {
+export async function listOrderHistory(
+  limit: number = 50,
+  cursor?: { settledAt: string; id: number } | null
+): Promise<{ data: OrderHistory[]; nextCursor: { settledAt: string; id: number } | null; hasMore: boolean }> {
   const db = await getDb();
-  if (!db) return [];
-  
-  return db.select().from(orderHistories).orderBy(desc(orderHistories.settledAt)).limit(limit).offset(offset);
+  if (!db) return { data: [], nextCursor: null, hasMore: false };
+
+  const fetchLimit = limit + 1;
+  let query = db.select().from(orderHistories).orderBy(desc(orderHistories.settledAt), desc(orderHistories.id));
+
+  if (cursor) {
+    query = query.where(
+      sql`(${orderHistories.settledAt}, ${orderHistories.id}) < (${cursor.settledAt}, ${cursor.id})`
+    ) as any;
+  }
+
+  const results = await query.limit(fetchLimit);
+  const hasMore = results.length > limit;
+  const data = hasMore ? results.slice(0, limit) : results;
+  const last = data[data.length - 1];
+
+  return {
+    data,
+    nextCursor: hasMore && last?.settledAt
+      ? { settledAt: String(last.settledAt), id: last.id }
+      : null,
+    hasMore,
+  };
 }
 
 // ============================================================================
@@ -482,63 +548,200 @@ export async function createOrUpdateDeviceRateLimit(deviceToken: string): Promis
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const existing = await getDeviceRateLimit(deviceToken);
-  const now = new Date();
+  // Use atomic SQL upsert to avoid TOCTOU race condition
+  const result = await db.execute(sql`
+    INSERT INTO "deviceRateLimits" ("deviceToken", "lastSubmissionAt", "submissionCount", "windowResetAt")
+    VALUES (${deviceToken}, NOW(), 1, NOW())
+    ON CONFLICT ("deviceToken") DO UPDATE SET
+      "lastSubmissionAt" = NOW(),
+      "submissionCount" = CASE
+        WHEN NOW() > "deviceRateLimits"."windowResetAt" + INTERVAL '1 minute' THEN 1
+        ELSE "deviceRateLimits"."submissionCount" + 1
+      END,
+      "windowResetAt" = CASE
+        WHEN NOW() > "deviceRateLimits"."windowResetAt" + INTERVAL '1 minute' THEN NOW()
+        ELSE "deviceRateLimits"."windowResetAt"
+      END
+    RETURNING *
+  `);
   
-  if (existing) {
-    // Check if window has reset
-    const windowResetTime = new Date(existing.windowResetAt.getTime() + 60 * 1000); // 1 minute window
-    const newCount = now > windowResetTime ? 1 : existing.submissionCount + 1;
-    const newWindowReset = now > windowResetTime ? now : existing.windowResetAt;
-    
-    await db.update(deviceRateLimits).set({
-      lastSubmissionAt: now,
-      submissionCount: newCount,
-      windowResetAt: newWindowReset,
-    }).where(eq(deviceRateLimits.deviceToken, deviceToken));
-    
-    return { ...existing, lastSubmissionAt: now, submissionCount: newCount, windowResetAt: newWindowReset };
-  } else {
-    const result = await db.insert(deviceRateLimits).values({
-      deviceToken,
-      lastSubmissionAt: now,
-      submissionCount: 1,
-      windowResetAt: now,
-    });
-    const id = result[0].insertId as number;
-    const created = await db.select().from(deviceRateLimits).where(eq(deviceRateLimits.id, id)).limit(1);
-    return created[0]!;
-  }
+  const rows = result as any;
+  if (!rows || rows.length === 0) throw new Error("Failed to upsert device rate limit");
+  return rows[0] as DeviceRateLimit;
 }
 
 // ============================================================================
-// CAFE SETTINGS
+// FEEDBACK
 // ============================================================================
 
-export async function getCafeSettings(): Promise<CafeSettings> {
+export async function createFeedback(data: InsertFeedback): Promise<Feedback> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  let result = await db.select().from(cafeSettings).limit(1);
-  
-  if (result.length === 0) {
-    // Create default settings if none exist
-    await db.insert(cafeSettings).values({});
-    result = await db.select().from(cafeSettings).limit(1);
-  }
-  
-  return result[0]!;
+  const [created] = await db.insert(feedback).values(data).returning();
+  return created!;
 }
 
-export async function updateCafeSettings(data: Partial<InsertCafeSettings>): Promise<void> {
+export async function getFeedbackBySessionId(sessionId: number): Promise<Feedback | undefined> {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const existing = await db.select().from(cafeSettings).limit(1);
-  
-  if (existing.length === 0) {
-    await db.insert(cafeSettings).values(data);
-  } else {
-    await db.update(cafeSettings).set(data).where(eq(cafeSettings.id, existing[0]!.id));
+  if (!db) return undefined;
+  const result = await db.select().from(feedback).where(eq(feedback.sessionId, sessionId)).limit(1);
+  return result[0];
+}
+
+export async function listFeedback(
+  limit: number = 50,
+  cursor?: { createdAt: string; id: number } | null
+): Promise<{ data: Feedback[]; nextCursor: { createdAt: string; id: number } | null; hasMore: boolean }> {
+  const db = await getDb();
+  if (!db) return { data: [], nextCursor: null, hasMore: false };
+
+  const fetchLimit = limit + 1;
+  let query = db.select().from(feedback).orderBy(desc(feedback.createdAt), desc(feedback.id));
+
+  if (cursor) {
+    query = query.where(
+      sql`(${feedback.createdAt}, ${feedback.id}) < (${cursor.createdAt}, ${cursor.id})`
+    ) as any;
   }
+
+  const results = await query.limit(fetchLimit);
+  const hasMore = results.length > limit;
+  const data = hasMore ? results.slice(0, limit) : results;
+  const last = data[data.length - 1];
+
+  return {
+    data,
+    nextCursor: hasMore && last?.createdAt
+      ? { createdAt: String(last.createdAt), id: last.id }
+      : null,
+    hasMore,
+  };
+}
+
+// ============================================================================
+// ANALYTICS
+// ============================================================================
+
+export async function getPopularItems(days: number = 30): Promise<{ menuItemId: number; name: string; count: number; revenue: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // DB-level aggregation: group by menuItemId, compute count and revenue, take top 20
+  const aggregated = await db
+    .select({
+      menuItemId: orderItems.menuItemId,
+      count: sql<number>`sum(${orderItems.quantity})`,
+      revenue: sql<number>`sum(${orderItems.priceAtOrderTime}::numeric * ${orderItems.quantity})`,
+    })
+    .from(orderItems)
+    .innerJoin(orders, eq(orderItems.orderId, orders.id))
+    .where(gte(orders.submittedAt, since))
+    .groupBy(orderItems.menuItemId)
+    .orderBy(desc(sql`sum(${orderItems.quantity})`))
+    .limit(20);
+
+  if (aggregated.length === 0) return [];
+
+  const menuItemIds = aggregated.map(r => r.menuItemId);
+  const menuResult = await db.select({ id: menuItems.id, name: menuItems.name }).from(menuItems).where(inArray(menuItems.id, menuItemIds));
+  const nameMap = new Map(menuResult.map(m => [m.id, m.name]));
+
+  return aggregated.map(r => ({
+    menuItemId: r.menuItemId,
+    name: nameMap.get(r.menuItemId) || `Item #${r.menuItemId}`,
+    count: Number(r.count),
+    revenue: Number(r.revenue),
+  }));
+}
+
+export async function getDailyRevenue(days: number = 7): Promise<{ date: string; revenue: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // DB-level aggregation: sum revenue per day
+  const aggregated = await db
+    .select({
+      date: sql<string>`TO_CHAR(${sessions.settledAt}, 'YYYY-MM-DD')`,
+      revenue: sql<number>`SUM(${sessions.finalTotal}::numeric)`,
+    })
+    .from(sessions)
+    .where(and(eq(sessions.status, "settled"), gte(sessions.settledAt, since)))
+    .groupBy(sql`TO_CHAR(${sessions.settledAt}, 'YYYY-MM-DD')`);
+
+  const dayMap = new Map(aggregated.map(r => [r.date, Number(r.revenue)]));
+  const result: { date: string; revenue: number }[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    const key = d.toISOString().slice(0, 10);
+    result.push({ date: key, revenue: dayMap.get(key) || 0 });
+  }
+  return result;
+}
+
+export async function getPeakHours(days: number = 30): Promise<{ hour: number; orderCount: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // DB-level aggregation: extract hour, count orders per hour
+  const aggregated = await db
+    .select({
+      hour: sql<number>`EXTRACT(HOUR FROM ${orders.submittedAt})::int`,
+      orderCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(orders)
+    .where(gte(orders.submittedAt, since))
+    .groupBy(sql`EXTRACT(HOUR FROM ${orders.submittedAt})`);
+
+  const hourMap = new Map(aggregated.map(r => [r.hour, r.orderCount]));
+  return Array.from({ length: 24 }, (_, i) => ({
+    hour: i,
+    orderCount: hourMap.get(i) || 0,
+  }));
+}
+
+export async function getTableTurnover(days: number = 7): Promise<{ tableLabel: string; sessionCount: number; totalRevenue: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // DB-level aggregation: group by tableId, compute session count and revenue
+  const aggregated = await db
+    .select({
+      tableId: sessions.tableId,
+      sessionCount: sql<number>`COUNT(*)::int`,
+      totalRevenue: sql<number>`SUM(${sessions.finalTotal}::numeric)`,
+    })
+    .from(sessions)
+    .where(and(eq(sessions.status, "settled"), gte(sessions.settledAt, since)))
+    .groupBy(sessions.tableId)
+    .orderBy(desc(sql`SUM(${sessions.finalTotal}::numeric)`));
+
+  if (aggregated.length === 0) return [];
+
+  const tableIds = aggregated.map(r => r.tableId);
+  const tablesData = await db.select().from(tables).where(inArray(tables.id, tableIds));
+  const labelMap = new Map(tablesData.map(t => [t.id, t.label]));
+
+  return aggregated.map(r => ({
+    tableLabel: labelMap.get(r.tableId) || `Table #${r.tableId}`,
+    sessionCount: r.sessionCount,
+    totalRevenue: Number(r.totalRevenue),
+  }));
+}
+
+export async function getAverageRating(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ avg: sql<number>`COALESCE(AVG(${feedback.rating}), 0)` }).from(feedback);
+  return Math.round((result[0]?.avg ?? 0) * 10) / 10;
+}
+
+export async function getFeedbackCount(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`COUNT(*)` }).from(feedback);
+  return result[0]?.count ?? 0;
 }

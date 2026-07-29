@@ -169,12 +169,12 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast as sonnerToast } from "sonner";
 import { AIChatBox, type Message } from "@/components/AIChatBox";
 
 export default function ComponentsShowcase() {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [datePickerDate, setDatePickerDate] = useState<Date>();
   const [selectedFruits, setSelectedFruits] = useState<string[]>([]);
@@ -192,6 +192,9 @@ export default function ComponentsShowcase() {
     { role: "system", content: "You are a helpful assistant." },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isChatStreaming, setIsChatStreaming] = useState(false);
+  const [chatStreamingContent, setChatStreamingContent] = useState("");
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   const handleDialogSubmit = () => {
     console.log("Dialog submitted with value:", dialogInput);
@@ -209,21 +212,66 @@ export default function ComponentsShowcase() {
     }
   };
 
-  const handleChatSend = (content: string) => {
-    // Add user message
+  const handleChatSend = async (content: string) => {
     const newMessages: Message[] = [...chatMessages, { role: "user", content }];
     setChatMessages(newMessages);
+    setIsChatStreaming(true);
+    setChatStreamingContent("");
 
-    // Simulate AI response with delay
-    setIsChatLoading(true);
-    setTimeout(() => {
-      const aiResponse: Message = {
-        role: "assistant",
-        content: `This is a **demo response**. In a real app, you would call a tRPC mutation here:\n\n\`\`\`typescript\nconst chatMutation = trpc.ai.chat.useMutation({\n  onSuccess: (response) => {\n    setChatMessages(prev => [...prev, {\n      role: "assistant",\n      content: response.choices[0].message.content\n    }]);\n  }\n});\n\nchatMutation.mutate({ messages: newMessages });\n\`\`\`\n\nYour message was: "${content}"`,
-      };
-      setChatMessages([...newMessages, aiResponse]);
-      setIsChatLoading(false);
-    }, 1500);
+    chatAbortRef.current?.abort();
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+
+    try {
+      const res = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMessages }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.token) {
+              fullContent += parsed.token;
+              setChatStreamingContent(fullContent);
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      setChatMessages([...newMessages, { role: "assistant", content: fullContent }]);
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setChatMessages([...newMessages, { role: "assistant", content: `Error: ${err.message}` }]);
+      }
+    } finally {
+      setChatStreamingContent("");
+      setIsChatStreaming(false);
+    }
   };
 
   return (
@@ -233,7 +281,7 @@ export default function ComponentsShowcase() {
           <h2 className="text-3xl font-bold tracking-tight mb-6">
             Shadcn/ui Component Library
           </h2>
-          <Button variant="outline" size="icon" onClick={toggleTheme}>
+          <Button variant="outline" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "light" ? (
               <Moon className="h-5 w-5" />
             ) : (
@@ -1403,13 +1451,15 @@ export default function ComponentsShowcase() {
                       Features markdown rendering, auto-scrolling, and loading states.
                     </p>
                     <p className="mt-2">
-                      This is a demo with simulated responses. In a real app, you'd connect it to a tRPC mutation.
+                      Streaming responses token by token via Server-Sent Events.
                     </p>
                   </div>
-                  <AIChatBox
+                   <AIChatBox
                     messages={chatMessages}
                     onSendMessage={handleChatSend}
                     isLoading={isChatLoading}
+                    isStreaming={isChatStreaming}
+                    streamingContent={chatStreamingContent}
                     placeholder="Try sending a message..."
                     height="500px"
                     emptyStateMessage="How can I help you today?"

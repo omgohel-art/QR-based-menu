@@ -31,24 +31,26 @@ export default function ImageUpload({ currentImageUrl, onImageChange }: ImageUpl
 
     setUploading(true);
     try {
-      const ext = file.name.split(".").pop() || "jpg";
-      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session) headers["Authorization"] = `Bearer ${session.access_token}`;
 
-      const { data, error: uploadError } = await supabase.storage
-        .from("food-images")
-        .upload(fileName, file, { contentType: file.type });
+      const res = await fetch("/api/images/upload", {
+        method: "POST",
+        headers,
+        body: file,
+      });
 
-      if (uploadError) throw uploadError;
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Upload failed");
+      }
 
-      const { data: publicUrlData } = supabase.storage
-        .from("food-images")
-        .getPublicUrl(fileName);
-
-      const publicUrl = publicUrlData.publicUrl;
-      setPreview(publicUrl);
-      onImageChange(publicUrl);
-    } catch (err: any) {
-      setError(err.message || "Upload failed");
+      const data = await res.json();
+      setPreview(data.url);
+      onImageChange(data.url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -87,7 +89,7 @@ export default function ImageUpload({ currentImageUrl, onImageChange }: ImageUpl
       <div className="space-y-3">
         <label className="block text-sm font-medium text-slate-700">Food Image</label>
         <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-          <img src={preview} alt="Preview" className="w-full h-48 object-cover" />
+          <img src={preview} alt="Preview" width={400} height={192} loading="lazy" className="w-full h-48 object-cover" />
           <div className="absolute top-2 right-2 flex gap-2">
             <button
               onClick={() => inputRef.current?.click()}

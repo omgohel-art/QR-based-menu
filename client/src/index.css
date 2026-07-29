@@ -52,7 +52,7 @@
   --color-menu-bg: #F8F4EC;
   --color-menu-card: #FFFCF8;
   --color-menu-primary: #4A3428;
-  --color-menu-accent: #C08A4D;
+  --color-menu-accent: var(--accent-color, #C08A4D);
   --color-menu-border: #E8E0D4;
   --color-menu-muted: #8B7E72;
   --color-menu-success: #10b981;
@@ -193,88 +193,21 @@
   }
 }
 
-/* Sweep animation button */
+/* Button styles */
 .btn-sweep {
-  padding: 1em 2em;
-  border: none;
-  border-radius: 5px;
-  font-weight: bold;
-  letter-spacing: 5px;
-  text-transform: uppercase;
-  cursor: pointer;
-  color: #5e7ff6;
-  transition: all 1000ms;
-  font-size: 15px;
-  position: relative;
-  overflow: hidden;
-  outline: 2px solid #5e7ff6;
-  background: transparent;
+  transition: all 200ms ease;
 }
-
 .btn-sweep:hover {
-  color: #ffffff;
-  transform: scale(1.05);
-  outline: 2px solid #8da4f8;
-  box-shadow: 4px 5px 17px -4px #4a6ae0;
+  opacity: 0.9;
+  transform: translateY(-1px);
 }
 
-.btn-sweep::before {
-  content: "";
-  position: absolute;
-  left: -50px;
-  top: 0;
-  width: 0;
-  height: 100%;
-  background-color: #5e7ff6;
-  transform: skewX(45deg);
-  z-index: -1;
-  transition: width 1000ms;
-}
-
-.btn-sweep:hover::before {
-  width: 250%;
-}
-
-/* Green sweep button variant */
 .btn-sweep-green {
-  padding: 0.5em 1.2em;
-  border: none;
-  border-radius: 5px;
-  font-weight: bold;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  cursor: pointer;
-  color: #16a34a;
-  transition: all 1000ms;
-  font-size: 12px;
-  position: relative;
-  overflow: hidden;
-  outline: 2px solid #16a34a;
-  background: transparent;
+  transition: all 200ms ease;
 }
-
 .btn-sweep-green:hover {
-  color: #ffffff;
-  transform: scale(1.05);
-  outline: 2px solid #22c55e;
-  box-shadow: 4px 5px 17px -4px #15803d;
-}
-
-.btn-sweep-green::before {
-  content: "";
-  position: absolute;
-  left: -50px;
-  top: 0;
-  width: 0;
-  height: 100%;
-  background-color: #16a34a;
-  transform: skewX(45deg);
-  z-index: -1;
-  transition: width 1000ms;
-}
-
-.btn-sweep-green:hover::before {
-  width: 250%;
+  opacity: 0.9;
+  transform: translateY(-1px);
 }
 
 /* Premium paper grain texture — applied to menu background */

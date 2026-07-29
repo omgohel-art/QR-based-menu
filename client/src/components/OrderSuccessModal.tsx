@@ -1,43 +1,51 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, ShoppingBag, ArrowRight } from "lucide-react";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface OrderSuccessModalProps {
   open: boolean;
-  orderId?: number | null;
+  orderNumber?: number | null;
   tableLabel?: string;
   total?: number;
   onContinue: () => void;
   onViewOrder?: () => void;
 }
 
-const AUTO_DISMISS_MS = 8000;
+const AUTO_DISMISS_MS = 20000;
 
 export default function OrderSuccessModal({
   open,
-  orderId,
+  orderNumber,
   tableLabel,
   total,
   onContinue,
   onViewOrder,
 }: OrderSuccessModalProps) {
   const [countdown, setCountdown] = useState(Math.ceil(AUTO_DISMISS_MS / 1000));
+  const [cancelled, setCancelled] = useState(false);
+  const { fmtPrice } = useFormatCurrency();
+  const cancelledRef = useRef(false);
+  const onContinueRef = useRef(onContinue);
+  onContinueRef.current = onContinue;
+  cancelledRef.current = cancelled;
 
   useEffect(() => {
     if (!open) return;
     setCountdown(Math.ceil(AUTO_DISMISS_MS / 1000));
+    setCancelled(false);
     const interval = setInterval(() => {
       setCountdown((c) => {
         if (c <= 1) {
           clearInterval(interval);
-          onContinue();
+          if (!cancelledRef.current) onContinueRef.current();
           return 0;
         }
         return c - 1;
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [open, onContinue]);
+  }, [open]);
 
   return (
     <AnimatePresence>
@@ -104,10 +112,10 @@ export default function OrderSuccessModal({
                 transition={{ delay: 0.5, duration: 0.3 }}
                 className="bg-[#F8F4EC] rounded-[16px] p-4 mb-6 space-y-2.5"
               >
-                {orderId != null && (
+                {orderNumber != null && (
                   <div className="flex justify-between text-sm">
                     <span className="text-[#8B7E72]">Order Number</span>
-                    <span className="font-bold text-[#4A3428]">#{String(orderId).padStart(3, "0")}</span>
+                    <span className="font-bold text-[#4A3428]">#{String(orderNumber).padStart(3, "0")}</span>
                   </div>
                 )}
                 {tableLabel && (
@@ -119,7 +127,7 @@ export default function OrderSuccessModal({
                 {total != null && (
                   <div className="flex justify-between text-sm">
                     <span className="text-[#8B7E72]">Amount</span>
-                    <span className="font-bold text-[#C08A4D]">{"\u20B9"}{total.toFixed(2)}</span>
+                    <span className="font-bold text-[#C08A4D]">{fmtPrice(total ?? 0)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm">
@@ -150,8 +158,16 @@ export default function OrderSuccessModal({
                 >
                   <ShoppingBag className="w-4 h-4" />
                   Continue Browsing
-                  <span className="text-[#8B7E72] text-xs ml-1">({countdown}s)</span>
+                  {!cancelled && <span className="text-[#8B7E72] text-xs ml-1">({countdown}s)</span>}
                 </button>
+                {!cancelled && (
+                  <button
+                    onClick={() => setCancelled(true)}
+                    className="w-full text-xs text-[#8B7E72] hover:text-[#4A3428] transition-colors py-1"
+                  >
+                    Stay on this page
+                  </button>
+                )}
               </motion.div>
             </div>
           </motion.div>

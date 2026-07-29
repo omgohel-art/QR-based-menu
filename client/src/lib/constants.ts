@@ -1,0 +1,1 @@
+export const DEFAULT_PRINTER_PORT = 9100;

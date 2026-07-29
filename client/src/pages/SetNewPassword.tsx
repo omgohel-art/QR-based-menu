@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Shield, Eye, EyeOff, CheckCircle, ArrowLeft } from "lucide-react";
 
@@ -15,8 +15,13 @@ export default function SetNewPassword() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
+  useEffect(() => {
+    if (!email || !otp) {
+      navigate("/forgot-password-otp", { replace: true });
+    }
+  }, [email, otp, navigate]);
+
   if (!email || !otp) {
-    navigate("/forgot-password-otp", { replace: true });
     return null;
   }
 

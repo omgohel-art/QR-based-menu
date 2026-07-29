@@ -15,7 +15,7 @@ const navLinks = [
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [, navigate] = useLocation();
-  const { theme, toggleTheme, switchable } = useTheme();
+  const { theme, setTheme } = useTheme();
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -40,17 +40,14 @@ export default function Navbar() {
         </nav>
 
         <div className="flex items-center gap-3">
-          {switchable && toggleTheme && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleTheme}
-              className="rounded-full"
-              aria-label="Toggle theme"
-            >
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="rounded-full w-9 h-9 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+          >
               {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </Button>
-          )}
             <Button
               onClick={() => navigate("/pricing")}
               className="hidden md:inline-flex btn-sweep rounded-full px-6"

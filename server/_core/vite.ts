@@ -24,6 +24,11 @@ export async function setupVite(app: Express, server: Server) {
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
+    // Skip SPA catch-all for API routes — they should have been handled by route handlers above
+    if (url.startsWith("/api/")) {
+      return next();
+    }
+
     try {
       const clientTemplate = path.resolve(
         import.meta.dirname,
@@ -56,6 +61,11 @@ export function serveStatic(app: Express) {
     console.error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
+    // Return 404 for SPA routes when build is missing
+    app.use("*", (_req, res) => {
+      res.status(404).json({ error: "Client build not found. Run the build first or start in development mode." });
+    });
+    return;
   }
 
   app.use(express.static(distPath));

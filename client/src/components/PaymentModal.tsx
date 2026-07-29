@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CreditCard, Store, X } from "lucide-react";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface PaymentModalProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface PaymentModalProps {
 
 export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelectPayAtCounter, finalTotal }: PaymentModalProps) {
   const [selected, setSelected] = useState<"online" | "counter" | null>(null);
+  const { fmtPrice } = useFormatCurrency();
 
   const handleContinue = () => {
     if (selected === "online") {
@@ -53,25 +55,25 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
 
               <div className="p-5 space-y-4">
                 <p className="text-sm font-medium text-slate-700">
-                  Total: <span className="text-lg font-bold text-blue-600">₹{finalTotal.toFixed(2)}</span>
+                  Total: <span className="text-lg font-bold text-amber-600">{fmtPrice(finalTotal)}</span>
                 </p>
 
                 <button
                   onClick={() => setSelected("online")}
                   className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
                     selected === "online"
-                      ? "border-blue-500 bg-blue-50 shadow-md"
-                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                      selected === "online" ? "bg-blue-500" : "bg-slate-100"
+                    ? "border-amber-500 bg-amber-50 shadow-md"
+                    : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                    selected === "online" ? "bg-amber-600" : "bg-slate-100"
                     }`}>
                       <CreditCard className={`w-5 h-5 ${selected === "online" ? "text-white" : "text-slate-500"}`} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className={`font-semibold ${selected === "online" ? "text-blue-700" : "text-slate-900"}`}>
+                      <h3 className={`font-semibold ${selected === "online" ? "text-amber-800" : "text-slate-900"}`}>
                         Pay Online
                       </h3>
                       <p className="text-sm text-slate-500 mt-0.5">
@@ -79,7 +81,7 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
                       </p>
                     </div>
                     <div className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                      selected === "online" ? "border-blue-500 bg-blue-500" : "border-slate-300"
+                      selected === "online" ? "border-amber-500 bg-amber-500" : "border-slate-300"
                     }`}>
                       {selected === "online" && <div className="w-2 h-2 rounded-full bg-white" />}
                     </div>
@@ -90,18 +92,18 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
                   onClick={() => setSelected("counter")}
                   className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
                     selected === "counter"
-                      ? "border-blue-500 bg-blue-50 shadow-md"
+                      ? "border-amber-500 bg-amber-50 shadow-md"
                       : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
                   }`}
                 >
                   <div className="flex items-start gap-4">
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                      selected === "counter" ? "bg-blue-500" : "bg-slate-100"
+                      selected === "counter" ? "bg-amber-600" : "bg-slate-100"
                     }`}>
                       <Store className={`w-5 h-5 ${selected === "counter" ? "text-white" : "text-slate-500"}`} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className={`font-semibold ${selected === "counter" ? "text-blue-700" : "text-slate-900"}`}>
+                      <h3 className={`font-semibold ${selected === "counter" ? "text-amber-800" : "text-slate-900"}`}>
                         Pay at Counter
                       </h3>
                       <p className="text-sm text-slate-500 mt-0.5">
@@ -109,7 +111,7 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
                       </p>
                     </div>
                     <div className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                      selected === "counter" ? "border-blue-500 bg-blue-500" : "border-slate-300"
+                      selected === "counter" ? "border-amber-500 bg-amber-500" : "border-slate-300"
                     }`}>
                       {selected === "counter" && <div className="w-2 h-2 rounded-full bg-white" />}
                     </div>
@@ -127,7 +129,7 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
                 <button
                   onClick={handleContinue}
                   disabled={!selected}
-                  className="flex-1 py-3 px-4 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors"
+                  className="flex-1 py-3 px-4 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed transition-colors"
                 >
                   Continue
                 </button>

@@ -113,6 +113,9 @@ export default function ImageGallery({ images, initialIndex = 0, onClose }: Imag
           <img
             src={current.url}
             alt={current.alt}
+            width={800}
+            height={600}
+            loading="lazy"
             className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl select-none"
             draggable={false}
           />
