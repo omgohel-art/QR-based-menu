@@ -359,4 +359,70 @@ router.get("/api/admin/popular-items", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/admin/settled-bills/history?page=1&limit=20&search=&date=2024-01-15
+ * Paginated settled bills from orderHistories.
+ */
+router.get("/api/admin/settled-bills/history", async (req: Request, res: Response) => {
+  try {
+    const userId = await requireAdmin(req, res);
+    if (!userId) return;
+
+    const db = await getDb();
+    if (!db) return res.json({ items: [], total: 0 });
+
+    const { orderHistories } = await import("../../drizzle/schema");
+    const { eq, desc, sql, like, and, count, gte, lte } = await import("drizzle-orm");
+
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const offset = (page - 1) * limit;
+    const search = (req.query.search as string) || "";
+    const dateFilter = (req.query.date as string) || "";
+
+    const conditions = [];
+    if (search) {
+      conditions.push(
+        sql`(${orderHistories.tableLabel} ILIKE ${"%" + search + "%"} OR ${orderHistories.customerName} ILIKE ${"%" + search + "%"} OR CAST(${orderHistories.id} AS TEXT) ILIKE ${"%" + search + "%"})`
+      );
+    }
+    if (dateFilter) {
+      conditions.push(sql`DATE(${orderHistories.settledAt} AT TIME ZONE 'Asia/Kolkata') = ${dateFilter}::date`);
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [countResult] = await db
+      .select({ count: count() })
+      .from(orderHistories)
+      .where(whereClause);
+
+    const items = await db
+      .select({
+        id: orderHistories.id,
+        sessionId: orderHistories.sessionId,
+        tableLabel: orderHistories.tableLabel,
+        customerName: orderHistories.customerName,
+        customerPhone: orderHistories.customerPhone,
+        subtotal: orderHistories.subtotal,
+        taxAmount: orderHistories.taxAmount,
+        serviceCharge: orderHistories.serviceCharge,
+        discountAmount: orderHistories.discountAmount,
+        finalTotal: orderHistories.finalTotal,
+        settledAt: orderHistories.settledAt,
+        createdAt: orderHistories.createdAt,
+      })
+      .from(orderHistories)
+      .where(whereClause)
+      .orderBy(desc(orderHistories.settledAt))
+      .limit(limit)
+      .offset(offset);
+
+    res.json({ items, total: countResult?.count || 0 });
+  } catch (err) {
+    console.error("[Settled Bills History] Error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;

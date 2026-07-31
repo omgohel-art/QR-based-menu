@@ -14,6 +14,8 @@ import invoiceRoutes from "./invoiceRoutes";
 import imageUploadRoutes from "./imageUploadRoutes";
 import chatRoutes from "./chatRoutes";
 import adminDataRoutes from "./adminDataRoutes";
+import inventoryRoutes from "./inventoryRoutes";
+import analyticsRoutes from "./analyticsRoutes";
 import { getDb } from "../db";
 
 // Guard: prevent accidental use of Razorpay test keys in production
@@ -141,6 +143,8 @@ async function startServer() {
   app.use(invoiceRoutes);
   app.use(imageUploadRoutes);
   app.use(adminDataRoutes);
+  app.use(inventoryRoutes);
+  app.use(analyticsRoutes);
 
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

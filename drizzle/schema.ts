@@ -296,6 +296,7 @@ export const businessSettings = pgTable("businessSettings", {
   review_link: text("review_link"),
   accent_color: varchar("accent_color", { length: 20 }).default("#C08A4D"),
   notif_enabled: boolean("notif_enabled").default(true),
+  saveInvoiceCustomerInfo: boolean("saveInvoiceCustomerInfo").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
@@ -367,3 +368,59 @@ export const leaveRequests = pgTable("leaveRequests", {
 
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export type InsertLeaveRequest = typeof leaveRequests.$inferInsert;
+
+/**
+ * InventoryItem entity: raw material / supply stock tracking.
+ */
+export const inventoryItems = pgTable("inventoryItems", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  category: varchar("category", { length: 64 }).notNull(),
+  sku: varchar("sku", { length: 64 }),
+  currentStock: decimal("currentStock", { precision: 12, scale: 3 }).default("0").notNull(),
+  unit: varchar("unit", { length: 16 }).notNull(),
+  minimumStock: decimal("minimumStock", { precision: 12, scale: 3 }).default("0").notNull(),
+  maximumStock: decimal("maximumStock", { precision: 12, scale: 3 }).default("0").notNull(),
+  purchasePrice: decimal("purchasePrice", { precision: 10, scale: 2 }).default("0").notNull(),
+  supplier: varchar("supplier", { length: 128 }),
+  lastRestockedAt: timestamp("lastRestockedAt"),
+  expiryDate: timestamp("expiryDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  categoryIdx: index("inv_category_idx").on(table.category),
+  nameIdx: index("inv_name_idx").on(table.name),
+  supplierIdx: index("inv_supplier_idx").on(table.supplier),
+  invCategoryCheck: check("inv_category_check", sql`${table.category} IN ('Coffee Beans', 'Tea', 'Milk & Dairy', 'Bread & Bakery', 'Vegetables', 'Fruits', 'Sauces', 'Syrups', 'Spices', 'Beverages', 'Packaging', 'Cleaning Supplies', 'Other')`),
+  invUnitCheck: check("inv_unit_check", sql`${table.unit} IN ('kg', 'g', 'L', 'ml', 'pcs', 'bottles', 'packets', 'boxes')`),
+}));
+
+export type InventoryItem = typeof inventoryItems.$inferSelect;
+export type InsertInventoryItem = typeof inventoryItems.$inferInsert;
+
+/**
+ * InventoryHistory entity: audit trail for every stock change.
+ */
+export const inventoryHistory = pgTable("inventoryHistory", {
+  id: serial("id").primaryKey(),
+  itemId: integer("itemId").notNull().references(() => inventoryItems.id, { onDelete: "cascade" }),
+  itemName: varchar("itemName", { length: 128 }).notNull(),
+  quantityChanged: decimal("quantityChanged", { precision: 12, scale: 3 }).notNull(),
+  beforeQuantity: decimal("beforeQuantity", { precision: 12, scale: 3 }).notNull(),
+  afterQuantity: decimal("afterQuantity", { precision: 12, scale: 3 }).notNull(),
+  action: varchar("action", { length: 16 }).notNull(),
+  reason: varchar("reason", { length: 32 }).notNull(),
+  userId: varchar("userId", { length: 64 }),
+  userName: varchar("userName", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  itemIdIdx: index("invhist_itemId_idx").on(table.itemId),
+  actionIdx: index("invhist_action_idx").on(table.action),
+  createdAtIdx: index("invhist_createdAt_idx").on(table.createdAt),
+  invhistActionCheck: check("invhist_action_check", sql`${table.action} IN ('add', 'remove')`),
+  invhistReasonCheck: check("invhist_reason_check", sql`${table.reason} IN ('Purchase', 'Waste', 'Damage', 'Expired', 'Correction', 'Other')`),
+}));
+
+export type InventoryHistoryEntry = typeof inventoryHistory.$inferSelect;
+export type InsertInventoryHistoryEntry = typeof inventoryHistory.$inferInsert;

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CreditCard, Store, X } from "lucide-react";
+import { CreditCard, Store, X, WifiOff } from "lucide-react";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
 
 interface PaymentModalProps {
   open: boolean;
@@ -14,6 +15,7 @@ interface PaymentModalProps {
 export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelectPayAtCounter, finalTotal }: PaymentModalProps) {
   const [selected, setSelected] = useState<"online" | "counter" | null>(null);
   const { fmtPrice } = useFormatCurrency();
+  const { isOffline } = useNetworkStatus();
 
   const handleContinue = () => {
     if (selected === "online") {
@@ -59,25 +61,28 @@ export default function PaymentModal({ open, onClose, onSelectPayOnline, onSelec
                 </p>
 
                 <button
-                  onClick={() => setSelected("online")}
+                  onClick={() => !isOffline && setSelected("online")}
+                  disabled={isOffline}
                   className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                    selected === "online"
-                    ? "border-amber-500 bg-amber-50 shadow-md"
-                    : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-                }`}
-              >
+                    isOffline
+                      ? "border-slate-100 bg-slate-50 opacity-50 cursor-not-allowed"
+                      : selected === "online"
+                        ? "border-amber-500 bg-amber-50 shadow-md"
+                        : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
                 <div className="flex items-start gap-4">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
                     selected === "online" ? "bg-amber-600" : "bg-slate-100"
                     }`}>
-                      <CreditCard className={`w-5 h-5 ${selected === "online" ? "text-white" : "text-slate-500"}`} />
+                      {isOffline ? <WifiOff className="w-5 h-5 text-slate-400" /> : <CreditCard className={`w-5 h-5 ${selected === "online" ? "text-white" : "text-slate-500"}`} />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className={`font-semibold ${selected === "online" ? "text-amber-800" : "text-slate-900"}`}>
                         Pay Online
                       </h3>
                       <p className="text-sm text-slate-500 mt-0.5">
-                        Pay securely using UPI, Card, Net Banking
+                        {isOffline ? "Requires internet connection" : "Pay securely using UPI, Card, Net Banking"}
                       </p>
                     </div>
                     <div className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${

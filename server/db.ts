@@ -52,6 +52,7 @@ export async function getDb() {
         max_lifetime: 300,
         keep_alive: 30,
         connect_timeout: 10,
+        ssl: process.env.DATABASE_URL!.includes("supabase") ? "allow" : undefined,
       });
       _db = drizzle(_client);
       return _db;
@@ -263,6 +264,38 @@ export async function settleSession(
     throw new Error("Invalid negative values in session settlement");
   }
 
+  // Fetch session data before settling
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  if (!session) throw new Error("Session not found");
+
+  const [tableRow] = await db.select().from(tables).where(eq(tables.id, session.tableId)).limit(1);
+  const tableLabel = tableRow?.label || "Unknown";
+
+  // Fetch items snapshot
+  const sessionOrders = await db.select({ id: orders.id }).from(orders).where(eq(orders.sessionId, sessionId));
+  const orderIds = sessionOrders.map(o => o.id);
+  const items = orderIds.length > 0
+    ? await db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds))
+    : [];
+
+  const itemsSnapshot = items.map(item => ({
+    menuItemId: item.menuItemId,
+    quantity: item.quantity,
+    priceAtOrderTime: parseFloat(item.priceAtOrderTime?.toString() || "0"),
+    specialInstructions: item.specialInstructions,
+  }));
+
+  // Fetch edits snapshot
+  const edits = await db.select().from(sessionEditLogs).where(eq(sessionEditLogs.sessionId, sessionId));
+  const editsSnapshot = edits.map(e => ({
+    changeType: e.changeType,
+    oldValue: e.oldValue,
+    newValue: e.newValue,
+    reason: e.reason,
+    changedBy: e.changedBy,
+    timestamp: e.timestamp,
+  }));
+
   // Use atomic SQL to recalculate finalTotal from current subtotal, avoiding stale reads
   await db.execute(sql`
     UPDATE sessions SET
@@ -275,6 +308,21 @@ export async function settleSession(
       settledAt = NOW(),
       settledBy = ${settledBy}
     WHERE id = ${sessionId} AND status = 'open'
+  `);
+
+  // Create order history record using raw SQL to avoid FK constraint issues
+  const finalTotal = Math.max(0, parseFloat(session.subtotal?.toString() || "0") + service + tax - discount);
+  await db.execute(sql`
+    INSERT INTO "orderHistories"
+      ("sessionId", "tableLabel", "itemsSnapshot", "editsSnapshot",
+       "subtotal", "taxAmount", "serviceCharge", "discountAmount", "discountReason",
+       "finalTotal", "customerName", "customerPhone", "settledBy", "settledAt")
+    VALUES (${sessionId}, ${tableLabel},
+      ${JSON.stringify(itemsSnapshot)}::jsonb, ${JSON.stringify(editsSnapshot)}::jsonb,
+      ${session.subtotal?.toString() || "0"}, ${taxAmount}, ${serviceCharge},
+      ${discountAmount}, ${discountReason},
+      ${finalTotal.toString()}, ${session.customerName || null}, ${session.customerPhone || null},
+      ${settledBy}, NOW())
   `);
 }
 

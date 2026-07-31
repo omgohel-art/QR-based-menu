@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import AdminAvatar from "@/components/admin/AdminAvatar";
+import OnlineIndicator from "@/components/OnlineIndicator";
 import ChangePassword from "@/components/admin/ChangePassword";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Settings, LogOut, Eye, EyeOff, Shield, Mail } from "lucide-react";
@@ -33,6 +34,8 @@ const StaffManagement = lazy(() => import("@/components/admin/StaffManagement"))
 const StaffActivity = lazy(() => import("@/components/admin/StaffActivity"));
 const StaffProfile = lazy(() => import("@/components/admin/StaffProfile"));
 const LeaveRequestAdmin = lazy(() => import("@/components/admin/LeaveRequestAdmin"));
+const InventoryPanel = lazy(() => import("@/components/admin/InventoryPanel"));
+const SettledBillsHistory = lazy(() => import("@/components/admin/SettledBillsHistory"));
 
 const TabFallback = () => (
   <div className="space-y-4">
@@ -65,6 +68,9 @@ export default function AdminPanel() {
   const { profile, logout, loading: authLoading } = useAuth();
   const isAdmin = profile?.role === "admin";
   const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && ["orders", "orderqueue", "tables", "menu", "analytics", "inventory", "settings"].includes(tab)) return tab;
     return isAdmin ? "orders" : "orderqueue";
   });
   const isKitchenMode = !isAdmin;
@@ -105,7 +111,7 @@ export default function AdminPanel() {
   // Redirect staff away from admin-only tabs
   useEffect(() => {
     if (!profile) return;
-    const adminTabs = ["orders", "tables", "menu", "analytics", "settings"];
+    const adminTabs = ["orders", "tables", "menu", "analytics", "settings", "inventory"];
     if (!isAdmin && adminTabs.includes(activeTab)) {
       setActiveTab("orderqueue");
     }
@@ -131,6 +137,7 @@ export default function AdminPanel() {
   };
   const storedSettings = loadStoredSettings();
   const [inactivityWindowMinutes, setInactivityWindowMinutes] = useState<string>(storedSettings.inactivityWindowMinutes ?? "75");
+  const [saveInvoiceCustomerInfo, setSaveInvoiceCustomerInfo] = useState<boolean>(storedSettings.saveInvoiceCustomerInfo ?? true);
 
   // Thermal Print State
   const [printData, setPrintData] = useState<{ sessionId: number; table: any } | null>(null);
@@ -158,19 +165,21 @@ export default function AdminPanel() {
   useEffect(() => {
     if (settings) {
       setInactivityWindowMinutes(settings.inactivityWindowMinutes?.toString() || "75");
+      setSaveInvoiceCustomerInfo(settings.saveInvoiceCustomerInfo ?? true);
     }
   }, [settings]);
 
   // Mutation to save settings
   const updateSettingsMutation = useMutation({
-    mutationFn: async (updated: { inactivityWindowMinutes: number }) => {
+    mutationFn: async (updated: { inactivityWindowMinutes: number; saveInvoiceCustomerInfo: boolean }) => {
       if (!settings?.id) {
         throw new Error("No settings record found to update");
       }
       const { error } = await supabase
         .from('businessSettings')
         .update({
-          inactivityWindowMinutes: updated.inactivityWindowMinutes
+          inactivityWindowMinutes: updated.inactivityWindowMinutes,
+          saveInvoiceCustomerInfo: updated.saveInvoiceCustomerInfo,
         })
         .eq('id', settings.id);
       if (error) throw error;
@@ -181,6 +190,7 @@ export default function AdminPanel() {
         "cafeSettings",
         JSON.stringify({
           inactivityWindowMinutes: updated.inactivityWindowMinutes.toString(),
+          saveInvoiceCustomerInfo: updated.saveInvoiceCustomerInfo,
         })
       );
       toast.success("Changes saved successfully!");
@@ -246,7 +256,7 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
       <style>{`
 .delivery-check {
   cursor: pointer;
@@ -328,6 +338,7 @@ export default function AdminPanel() {
                   )}
                 </button>
               )}
+              <OnlineIndicator />
               <AdminAvatar onNavigate={handleAvatarNavigation} />
             </div>
           </div>
@@ -335,7 +346,7 @@ export default function AdminPanel() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8">
+      <div className="flex-1 max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8 w-full">
         {avatarPage ? (
           <>
             <button
@@ -362,14 +373,17 @@ export default function AdminPanel() {
           </>
         ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="flex w-full overflow-x-auto mb-6 md:mb-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 sticky top-[96px] z-30 shadow-sm">
-            {!isKitchenMode && isAdmin && <TabsTrigger value="orders" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Orders</TabsTrigger>}
-            <TabsTrigger value="orderqueue" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Order Queue</TabsTrigger>
-            {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Tables</TabsTrigger>}
-            {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Menu</TabsTrigger>}
-            {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Analytics</TabsTrigger>}
-            {!isKitchenMode && isAdmin && <TabsTrigger value="settings" className="flex-1 min-w-0 text-xs md:text-sm whitespace-nowrap">Settings</TabsTrigger>}
-          </TabsList>
+          <div className="sticky top-[96px] z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 shadow-sm">
+            <TabsList className="flex overflow-x-auto scrollbar-hide w-full max-w-7xl mx-auto !h-auto !p-0 !bg-transparent !justify-start">
+              {!isKitchenMode && isAdmin && <TabsTrigger value="orders" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Orders</TabsTrigger>}
+              <TabsTrigger value="orderqueue" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Order Queue</TabsTrigger>
+              {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Tables</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Menu</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Analytics</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="inventory" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Inventory</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="settings" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Settings</TabsTrigger>}
+            </TabsList>
+          </div>
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-6">
@@ -397,6 +411,11 @@ export default function AdminPanel() {
           <TabsContent value="analytics" className="space-y-6">
             <Suspense fallback={<TabFallback />}>
               <AnalyticsDashboard />
+            </Suspense>
+          </TabsContent>
+          <TabsContent value="inventory" className="space-y-6">
+            <Suspense fallback={<TabFallback />}>
+              <InventoryPanel />
             </Suspense>
           </TabsContent>
           <TabsContent value="settings" className="space-y-6">
@@ -452,25 +471,42 @@ export default function AdminPanel() {
                       placeholder="75"
                       value={inactivityWindowMinutes}
                       onChange={(e) => setInactivityWindowMinutes(e.target.value)}
+                      onBlur={() => {
+                        const windowMin = parseInt(inactivityWindowMinutes);
+                        if (!isNaN(windowMin) && settings?.id) {
+                          supabase.from('businessSettings').update({ inactivityWindowMinutes: windowMin }).eq('id', settings.id).then(() => {
+                            queryClient.invalidateQueries({ queryKey: ['businessSettings'] });
+                            localStorage.setItem("cafeSettings", JSON.stringify({ ...loadStoredSettings(), inactivityWindowMinutes: windowMin.toString() }));
+                            toast.success("Settings saved");
+                          });
+                        }
+                      }}
                     />
                     <p className="text-xs text-slate-400">Service charge & GST are configured in Business Info → Billing Settings.</p>
                   </div>
-                  <Button
-                    onClick={() => {
-                      const windowMin = parseInt(inactivityWindowMinutes);
-                      if (isNaN(windowMin)) {
-                        toast.error("Please enter a valid number");
-                        return;
-                      }
-                      updateSettingsMutation.mutate({
-                        inactivityWindowMinutes: windowMin
-                      });
-                    }}
-                    disabled={updateSettingsMutation.isPending}
-                    className="w-full btn-sweep font-semibold"
-                  >
-                    {updateSettingsMutation.isPending ? "Saving..." : "Save Changes"}
-                  </Button>
+                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                    <div>
+                      <label className="text-sm font-medium text-slate-900 dark:text-white">Save customer info on settle/send</label>
+                      <p className="text-xs text-slate-400 mt-0.5">When settling a bill or sending an invoice, save customer name & phone number to the settled bill history</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newVal = !saveInvoiceCustomerInfo;
+                        setSaveInvoiceCustomerInfo(newVal);
+                        if (settings?.id) {
+                          supabase.from('businessSettings').update({ saveInvoiceCustomerInfo: newVal }).eq('id', settings.id).then(() => {
+                            queryClient.invalidateQueries({ queryKey: ['businessSettings'] });
+                            localStorage.setItem("cafeSettings", JSON.stringify({ ...loadStoredSettings(), saveInvoiceCustomerInfo: newVal }));
+                            toast.success(newVal ? "Customer info saving enabled" : "Customer info saving disabled");
+                          });
+                        }
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${saveInvoiceCustomerInfo ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${saveInvoiceCustomerInfo ? "translate-x-6" : "translate-x-1"}`} />
+                    </button>
+                  </div>
                 </div>
               )}
             </Card>
@@ -582,6 +618,10 @@ export default function AdminPanel() {
                 </Button>
               </div>
             </Card>
+
+            <Suspense fallback={<TabFallback />}>
+              <SettledBillsHistory />
+            </Suspense>
             </>
             )}
 
@@ -607,9 +647,7 @@ export default function AdminPanel() {
         </Suspense>
       )}
 
-      <div className="mt-16">
-        <Footer variant="admin" />
-      </div>
+      <Footer variant="admin" />
     </div>
   );
 }

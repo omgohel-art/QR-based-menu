@@ -9,6 +9,8 @@ import { CartProvider } from "./contexts/CartContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import { SoundSettingsProvider } from "./contexts/SoundSettingsContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
+import { NetworkStatusProvider } from "./contexts/NetworkStatusContext";
+import OfflineBanner from "./components/OfflineBanner";
 import NotificationToastQueue from "./components/notifications/NotificationToast";
 import Login from "./pages/Login";
 import ForceChangePassword from "./pages/ForceChangePassword";
@@ -39,6 +41,15 @@ const RefundPolicy = lazy(() => import("./pages/marketing/RefundPolicy"));
 const ShippingPolicy = lazy(() => import("./pages/marketing/ShippingPolicy"));
 const FAQ = lazy(() => import("./pages/marketing/FAQ"));
 
+// Analytics drill-down pages
+const RevenueAnalytics = lazy(() => import("./pages/analytics/RevenueAnalytics"));
+const OrderAnalytics = lazy(() => import("./pages/analytics/OrderAnalytics"));
+const TableAnalytics = lazy(() => import("./pages/analytics/TableAnalytics"));
+const BillingAnalytics = lazy(() => import("./pages/analytics/BillingAnalytics"));
+const RevenueChartAnalytics = lazy(() => import("./pages/analytics/RevenueChartAnalytics"));
+const PopularItemsAnalytics = lazy(() => import("./pages/analytics/PopularItemsAnalytics"));
+const TableBreakdownAnalytics = lazy(() => import("./pages/analytics/TableBreakdownAnalytics"));
+
 function Router() {
   return (
     <Suspense fallback={null}>
@@ -54,6 +65,27 @@ function Router() {
         <ProtectedRoute>
           <AdminPanel />
         </ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/revenue"}>
+        <ProtectedRoute><RevenueAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/orders"}>
+        <ProtectedRoute><OrderAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/tables"}>
+        <ProtectedRoute><TableAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/billing"}>
+        <ProtectedRoute><BillingAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/revenue-chart"}>
+        <ProtectedRoute><RevenueChartAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/products"}>
+        <ProtectedRoute><PopularItemsAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/table-breakdown"}>
+        <ProtectedRoute><TableBreakdownAnalytics /></ProtectedRoute>
       </Route>
       <Route path={"/table/:tableCode/cart"} component={CartPage} />
       <Route path={"/table/:tableCode/payment"} component={PaymentPage} />
@@ -83,16 +115,19 @@ function App() {
       <ThemeProvider>
         <TooltipProvider>
           <AuthProvider>
-            <NotificationProvider>
-              <SoundSettingsProvider>
-                <CartProvider>
-                  <RealtimeSubscriptions />
-                  <NotificationToastQueue />
-                  <Toaster />
-                  <Router />
-                </CartProvider>
-              </SoundSettingsProvider>
-            </NotificationProvider>
+            <NetworkStatusProvider>
+              <NotificationProvider>
+                <SoundSettingsProvider>
+                  <CartProvider>
+                    <OfflineBanner />
+                    <RealtimeSubscriptions />
+                    <NotificationToastQueue />
+                    <Toaster />
+                    <Router />
+                  </CartProvider>
+                </SoundSettingsProvider>
+              </NotificationProvider>
+            </NetworkStatusProvider>
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

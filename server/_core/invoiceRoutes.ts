@@ -198,10 +198,19 @@ router.post("/api/invoice/send", async (req: Request, res: Response) => {
     const userId = getUserIdFromToken(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { sessionId, email } = req.body;
+    const { sessionId, email, customerName, customerPhone } = req.body;
 
     if (!sessionId || !email) {
       return res.status(400).json({ error: "Session ID and email are required" });
+    }
+
+    // Save customer info to orderHistories if provided
+    if (customerName || customerPhone) {
+      const supabaseClient = getSupabase();
+      const updatePayload: Record<string, any> = {};
+      if (customerName) updatePayload.customerName = customerName;
+      if (customerPhone) updatePayload.customerPhone = customerPhone;
+      await supabaseClient.from("orderHistories").update(updatePayload).eq("sessionId", sessionId);
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

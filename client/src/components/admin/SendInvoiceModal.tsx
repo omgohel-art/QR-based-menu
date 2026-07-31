@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
+import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, MessageCircle, CheckCircle, AlertCircle, User, Phone } from "lucide-react";
+import { Loader2, MessageCircle, CheckCircle, AlertCircle, User, Phone, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 
 interface SendInvoiceModalProps {
@@ -77,6 +78,7 @@ function buildInvoiceMessage(data: {
 }
 
 export default function SendInvoiceModal({ open, onOpenChange, sessionId, customerName, customerPhone }: SendInvoiceModalProps) {
+  const { isOffline } = useNetworkStatus();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
@@ -101,6 +103,11 @@ export default function SendInvoiceModal({ open, onOpenChange, sessionId, custom
 
   const handleSend = async () => {
     setError(null);
+
+    if (isOffline) {
+      setError("No internet connection. WhatsApp sharing requires an online connection.");
+      return;
+    }
 
     const phoneCheck = validatePhone(phone);
     if (!phoneCheck.valid) {
@@ -132,6 +139,16 @@ export default function SendInvoiceModal({ open, onOpenChange, sessionId, custom
       const whatsappUrl = `https://wa.me/${phoneCheck.sanitized}?text=${encodeURIComponent(message)}`;
 
       window.open(whatsappUrl, "_blank");
+
+      // Save customer info to orderHistories
+      const resolvedPhone = phoneCheck.sanitized || customerPhone || undefined;
+      if (resolvedName || resolvedPhone) {
+        fetch(`/api/invoice/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, email: "whatsapp", customerName: resolvedName, customerPhone: resolvedPhone }),
+        }).catch(() => {});
+      }
 
       setDone(true);
       toast.success("WhatsApp is ready. Review the message and press Send.");

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Users, TrendingUp, Search, Clock, Bell, CheckCircle, MessageCircle, Trash2 } from "lucide-react";
+import { Users, TrendingUp, Search, Clock, Bell, CheckCircle, MessageCircle, Trash2, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import SendInvoiceModal from "./SendInvoiceModal";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
@@ -30,12 +31,23 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
   const queryClient = useQueryClient();
   const { fmtPrice } = useFormatCurrency();
   const { enabled: soundEnabled, volume: soundVolume } = useSoundSettings();
+  const { isOffline } = useNetworkStatus();
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [sessionDetailsKey, setSessionDetailsKey] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
   const lastOrderIdsRef = useRef<Set<number>>(new Set());
   const cardsContainerRef = useRef<HTMLDivElement>(null);
+
+  const { data: settings } = useQuery({
+    queryKey: ["businessSettings"],
+    queryFn: async () => {
+      const { data } = await supabase.from("businessSettings").select("saveInvoiceCustomerInfo").single();
+      return data;
+    },
+    staleTime: 60_000,
+  });
+  const showCustomerInfo = settings?.saveInvoiceCustomerInfo ?? true;
 
   // Confirmation dialog state
   const [confirmAction, setConfirmAction] = useState<{
@@ -44,6 +56,8 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
     tableId?: number;
     label?: string;
   } | null>(null);
+  const [settleName, setSettleName] = useState("");
+  const [settlePhone, setSettlePhone] = useState("");
 
   // Note: settled bills query removed — settled bills section was removed from Orders tab.
   // queryClient.invalidateQueries({ queryKey: ['settledBills'] }) is still called after settling.
@@ -305,29 +319,78 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
   });
 
   const settleBillMutation = useMutation({
-    mutationFn: async (sessionId: number) => {
-      const { data: orders } = await supabase.from('orders').select('id').eq('sessionId', sessionId);
-      if (orders && orders.length > 0) {
-        const orderIds = orders.map(o => o.id);
+    mutationFn: async ({ sessionId, customerName, customerPhone }: { sessionId: number; customerName?: string; customerPhone?: string }) => {
+      // Check setting before saving customer info
+      const { data: settings } = await supabase.from("businessSettings").select("saveInvoiceCustomerInfo").single();
+      const shouldSave = settings?.saveInvoiceCustomerInfo ?? true;
+      const nameToSave = shouldSave && customerName ? customerName : null;
+      const phoneToSave = shouldSave && customerPhone ? customerPhone : null;
+
+      // Fetch session data
+      const { data: session } = await supabase.from('sessions').select('*').eq('id', sessionId).single();
+      if (!session) throw new Error("Session not found");
+
+      // Fetch table label
+      const { data: tableRow } = await supabase.from('tables').select('label').eq('id', session.tableId).single();
+      const tableLabel = tableRow?.label || "Unknown";
+
+      // Fetch orders and items for snapshot
+      const { data: ordersList } = await supabase.from('orders').select('id').eq('sessionId', sessionId);
+      const orderIds = ordersList?.map((o: any) => o.id) || [];
+      let itemsSnapshot: any[] = [];
+      if (orderIds.length > 0) {
+        const { data: items } = await supabase.from('orderItems').select('*').in('orderId', orderIds);
+        itemsSnapshot = (items || []).map((item: any) => ({
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          priceAtOrderTime: parseFloat(item.priceAtOrderTime?.toString() || "0"),
+          specialInstructions: item.specialInstructions,
+        }));
+      }
+
+      // Update orders to settled
+      if (orderIds.length > 0) {
         await supabase.from('orders').update({ orderStatus: 'settled' }).in('id', orderIds);
       }
-      await supabase.from('sessions').update({
-        status: 'settled',
-        settledAt: new Date().toISOString()
-      }).eq('id', sessionId);
-      const { data: session } = await supabase.from('sessions').select('tableId').eq('id', sessionId).single();
-      if (session) {
-        await supabase.from('tables').update({
-          status: 'empty',
-          activeSessionId: null
-        }).eq('id', session.tableId);
-      }
+
+      // Save customer info and settle session
+      const sessionUpdate: any = { status: 'settled', settledAt: new Date().toISOString() };
+      if (nameToSave) sessionUpdate.customerName = nameToSave;
+      if (phoneToSave) sessionUpdate.customerPhone = phoneToSave;
+      await supabase.from('sessions').update(sessionUpdate).eq('id', sessionId);
+
+      // Free up table
+      await supabase.from('tables').update({ status: 'empty', activeSessionId: null }).eq('id', session.tableId);
+
+      // Create orderHistories record
+      const subtotal = parseFloat(session.subtotal?.toString() || "0");
+      const tax = parseFloat(session.taxAmount?.toString() || "0");
+      const service = parseFloat(session.serviceCharge?.toString() || "0");
+      const discount = parseFloat(session.discountAmount?.toString() || "0");
+      const finalTotal = Math.max(0, subtotal + service + tax - discount);
+
+      await supabase.from('orderHistories').insert({
+        sessionId,
+        tableLabel,
+        itemsSnapshot,
+        editsSnapshot: [],
+        subtotal: session.subtotal?.toString() || "0",
+        taxAmount: session.taxAmount?.toString() || "0",
+        serviceCharge: session.serviceCharge?.toString() || "0",
+        discountAmount: session.discountAmount?.toString() || "0",
+        discountReason: session.discountReason || null,
+        finalTotal: finalTotal.toString(),
+        customerName: nameToSave || session.customerName || null,
+        customerPhone: phoneToSave || session.customerPhone || null,
+        settledAt: new Date().toISOString(),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['activeTables'] });
       queryClient.invalidateQueries({ queryKey: ['tables'] });
       queryClient.invalidateQueries({ queryKey: ['todayRevenue'] });
       queryClient.invalidateQueries({ queryKey: ['settledBills'] });
+      queryClient.invalidateQueries({ queryKey: ['settledBillsHistory'] });
       toast.success("Bill settled successfully");
     },
     onError: (error: Error) => toast.error(error.message),
@@ -402,9 +465,33 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
           </DialogHeader>
           <div className="py-2">
             {confirmAction?.type === "settle" && (
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                This will mark all orders as settled, close the session, and free up <strong>{confirmAction.label}</strong>. This action cannot be undone.
-              </p>
+              <>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                  This will mark all orders as settled, close the session, and free up <strong>{confirmAction.label}</strong>. This action cannot be undone.
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1 block">Customer Name</label>
+                    <input
+                      type="text"
+                      value={settleName}
+                      onChange={(e) => setSettleName(e.target.value)}
+                      placeholder="Enter customer name"
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white dark:bg-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1 block">Mobile Number</label>
+                    <input
+                      type="tel"
+                      value={settlePhone}
+                      onChange={(e) => setSettlePhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                      placeholder="Enter 10-digit mobile"
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white dark:bg-slate-800"
+                    />
+                  </div>
+                </div>
+              </>
             )}
             {confirmAction?.type === "markPaid" && (
               <p className="text-sm text-slate-600 dark:text-slate-400">
@@ -426,13 +513,19 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
               onClick={() => {
                 if (!confirmAction) return;
                 if (confirmAction.type === "settle") {
-                  settleBillMutation.mutate(confirmAction.sessionId);
+                  settleBillMutation.mutate({
+                    sessionId: confirmAction.sessionId,
+                    customerName: settleName.trim() || undefined,
+                    customerPhone: settlePhone.trim() || undefined,
+                  });
                 } else if (confirmAction.type === "markPaid") {
                   markAsPaidMutation.mutate(confirmAction.sessionId);
                 } else if (confirmAction.type === "deleteEmpty" && confirmAction.tableId) {
                   deleteEmptyMutation.mutate({ sessionId: confirmAction.sessionId, tableId: confirmAction.tableId });
                 }
                 setConfirmAction(null);
+                setSettleName("");
+                setSettlePhone("");
               }}
             >
               Confirm
@@ -736,12 +829,17 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
                     <Button
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (isOffline) {
+                          toast.error("No Internet", { description: "WhatsApp sharing requires an internet connection." });
+                          return;
+                        }
                         setSendInvoiceSessionId(table.sessionId);
                       }}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500 text-white font-medium rounded-lg transition-all duration-200 hover:-translate-y-0.5"
+                      disabled={isOffline}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500 text-white font-medium rounded-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <MessageCircle className="w-3.5 h-3.5 mr-2" />
-                      Send via WhatsApp
+                      {isOffline ? "Offline" : "Send via WhatsApp"}
                     </Button>
                   </>
                 )}

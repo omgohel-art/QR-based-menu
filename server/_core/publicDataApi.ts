@@ -7,6 +7,7 @@ import {
 import { getDb } from "../db";
 import { businessSettings } from "../../drizzle/schema";
 import { getUserIdFromToken } from "./authRoutes";
+import { createClient } from "@supabase/supabase-js";
 
 const router = Router();
 
@@ -20,6 +21,13 @@ function setCacheHeaders(res: Response): void {
   );
 }
 
+function getSupabaseFallback() {
+  const url = process.env.VITE_SUPABASE_URL || "";
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
 router.get("/api/public/categories", async (_req: Request, res: Response) => {
   const cached = menuDataCache.get("categories");
   if (cached) {
@@ -28,7 +36,17 @@ router.get("/api/public/categories", async (_req: Request, res: Response) => {
   }
   try {
     const db = await getDb();
-    if (!db) return res.json([]);
+    if (!db) {
+      // Fallback to Supabase client
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data } = await sb.from("categories").select("*").order("displayOrder").order("name");
+        menuDataCache.set("categories", data || []);
+        setCacheHeaders(res);
+        return res.json(data || []);
+      }
+      return res.json([]);
+    }
     const data = await listCategories();
     menuDataCache.set("categories", data);
     setCacheHeaders(res);
@@ -42,7 +60,42 @@ router.get("/api/public/categories", async (_req: Request, res: Response) => {
 router.get("/api/public/menu-items", async (_req: Request, res: Response) => {
   try {
     const db = await getDb();
-    if (!db) return res.json([]);
+    if (!db) {
+      // Fallback to Supabase client
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data } = await sb.from("menuItems").select("*").order("categoryId").order("displayOrder").order("name");
+        res.setHeader("Cache-Control", "no-store");
+        return res.json(data || []);
+      }
+      console.warn("[Public] Menu items: DB not available, returning empty");
+      return res.json([]);
+    }
+    const data = await listMenuItems();
+    res.setHeader("Cache-Control", "no-store");
+    res.json(data);
+  } catch (err) {
+    console.error("[Cache] Failed to fetch menu items:", err);
+    // Fallback to Supabase client on error
+    try {
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data } = await sb.from("menuItems").select("*").order("categoryId").order("displayOrder").order("name");
+        res.setHeader("Cache-Control", "no-store");
+        return res.json(data || []);
+      }
+    } catch {}
+    res.status(500).json({ error: "Failed to fetch menu items" });
+  }
+});
+
+router.get("/api/public/menu-items", async (_req: Request, res: Response) => {
+  try {
+    const db = await getDb();
+    if (!db) {
+      console.warn("[Public] Menu items: DB not available, returning empty");
+      return res.json([]);
+    }
     const data = await listMenuItems();
     res.setHeader("Cache-Control", "no-store");
     res.json(data);

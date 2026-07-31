@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useCart } from "@/contexts/CartContext";
+import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Lock, Shield, CreditCard } from "lucide-react";
+import { ArrowLeft, Lock, Shield, CreditCard, WifiOff } from "lucide-react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,7 @@ export default function PaymentPage() {
   const tableCode = params?.tableCode;
   const [, navigate] = useLocation();
   const { clearCart } = useCart();
+  const { isOffline } = useNetworkStatus();
   const [paymentState, setPaymentState] = useState<PaymentState | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sdkLoaded, setSdkLoaded] = useState(false);
@@ -92,6 +94,10 @@ export default function PaymentPage() {
 
   const handleRazorpayPayment = async () => {
     if (!paymentState || !tableCode) return;
+    if (isOffline) {
+      toast.error("No Internet", { description: "Online payment requires an internet connection. Please reconnect and try again." });
+      return;
+    }
     setIsProcessing(true);
 
     try {
@@ -282,10 +288,15 @@ export default function PaymentPage() {
 
         <button
           onClick={handleRazorpayPayment}
-          disabled={isProcessing || !sdkLoaded}
+          disabled={isProcessing || !sdkLoaded || isOffline}
           className="w-full py-4 px-6 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
         >
-          {isProcessing ? (
+          {isOffline ? (
+            <span className="flex items-center gap-2">
+              <WifiOff className="w-5 h-5" />
+              No Internet Connection
+            </span>
+          ) : isProcessing ? (
             <span className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
               Processing…
