@@ -1,3 +1,4 @@
+// Deploy trigger: 2026-08-08
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
