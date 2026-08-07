@@ -61,13 +61,19 @@ function securityHeaders(_req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function corsMiddleware(_req: Request, res: Response, next: NextFunction) {
-  const origin = _req.headers.origin || "";
-  const allowedOrigins = [
+function getAllowedOrigins(): string[] {
+  return [
     process.env.CORS_ORIGIN || "http://localhost:5173",
     "http://localhost:3000",
+    process.env.RENDER_EXTERNAL_URL || "",
+    "https://qr-based-menu-xp97.onrender.com",
     ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
-  ];
+  ].filter(Boolean);
+}
+
+function corsMiddleware(_req: Request, res: Response, next: NextFunction) {
+  const origin = _req.headers.origin || "";
+  const allowedOrigins = getAllowedOrigins();
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -90,11 +96,7 @@ function csrfProtection(req: Request, res: Response, next: NextFunction) {
   if (!origin) {
     return res.status(403).json({ error: "CSRF validation failed" });
   }
-  const allowedOrigins = [
-    process.env.CORS_ORIGIN || "http://localhost:5173",
-    "http://localhost:3000",
-    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
-  ];
+  const allowedOrigins = getAllowedOrigins();
   const originUrl = origin.replace(/\/$/, "");
   const isValid = allowedOrigins.some((a) => originUrl === a);
   if (!isValid) {

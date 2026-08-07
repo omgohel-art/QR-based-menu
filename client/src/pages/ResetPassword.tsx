@@ -18,26 +18,39 @@ export default function ResetPassword() {
 
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash && hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get("access_token");
-      const refreshToken = params.get("refresh_token");
-      if (accessToken && refreshToken) {
-        supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        }).then(({ error }) => {
-          if (error) setError("Invalid or expired reset link");
-          setInitializing(false);
-        });
-      } else {
-        setError("Invalid reset link");
+    const query = window.location.search;
+
+    // Supabase may send tokens in the hash (#access_token=...) or query (?access_token=...)
+    const tokenSource = (hash && hash.includes("access_token")) ? hash.substring(1) : (query && query.includes("access_token") ? query.substring(1) : "");
+    const params = new URLSearchParams(tokenSource);
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    const errorDescription = params.get("error_description");
+
+    if (errorDescription) {
+      setError(decodeURIComponent(errorDescription.replace(/\+/g, " ")));
+      setInitializing(false);
+      return;
+    }
+
+    if (accessToken && refreshToken) {
+      supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      }).then(({ error }) => {
+        if (error) setError("Invalid or expired reset link");
         setInitializing(false);
-      }
+        // Clean the URL so a refresh doesn't replay the tokens
+        window.history.replaceState(null, "", window.location.pathname);
+      });
     } else {
+      // No tokens in URL — check if there's already a session
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (!session) {
-          navigate("/login", { replace: true });
+          // Show error instead of silently redirecting, so user knows the link is bad
+          setError("Invalid or expired reset link. Please request a new one.");
+          setInitializing(false);
+          return;
         }
         setInitializing(false);
       });
@@ -86,10 +99,33 @@ export default function ResetPassword() {
           <h1 className="text-xl font-bold text-slate-900 mb-2">Password Reset Successful</h1>
           <p className="text-sm text-slate-500 mb-6">You can now sign in with your new password.</p>
           <button
-            onClick={() => navigate("/login", { replace: true })}
+            onClick={async () => {
+              await supabase.auth.signOut();
+              navigate("/login", { replace: true });
+            }}
             className="w-full h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold transition-colors"
           >
             Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && initializing === false) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-slate-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+          <div className="w-14 h-14 mx-auto rounded-full bg-red-100 flex items-center justify-center mb-4">
+            <Shield className="w-7 h-7 text-red-500" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-900 mb-2">Reset Link Invalid</h1>
+          <p className="text-sm text-slate-500 mb-6">{error}</p>
+          <button
+            onClick={() => navigate("/forgot-password", { replace: true })}
+            className="w-full h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold transition-colors"
+          >
+            Request a New Link
           </button>
         </div>
       </div>
