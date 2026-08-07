@@ -13,10 +13,11 @@ import {
 import {
   ArrowLeft, Camera, Loader2, Shield, Clock, Calendar,
   Mail, Lock, ChevronRight, Trash2, User, Monitor,
-  Settings, Volume2, VolumeX, Play,
+  Settings, Volume2, VolumeX, Play, Hash, Copy, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useSoundSettings } from "@/contexts/SoundSettingsContext";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 import { notificationSound } from "@/services/notificationSound";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -37,6 +38,7 @@ interface MyProfileProps {
 
 export default function MyProfile({ onNavigate }: MyProfileProps) {
   const { user, profile, updateProfile } = useAuth();
+  const { t } = useStaffLanguage();
   const { enabled: soundEnabled, volume: soundVolume, setEnabled: setSoundEnabled, setVolume: setSoundVolume } = useSoundSettings();
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -45,6 +47,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
   const [timezone, setTimezone] = useState(profile?.timezone || "Asia/Kolkata");
   const [preview, setPreview] = useState<string | null>(profile?.profile_image_url || null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [pinCopied, setPinCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -219,6 +222,60 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
               </div>
             </div>
           </div>
+        </Card>
+
+        {/* Login PIN */}
+        <Card className="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-900 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Hash className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              {t("loginPin")}
+            </h2>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
+              Read-only
+            </span>
+          </div>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+            {t("pinDescription")}
+          </p>
+          <div className="flex items-center justify-center gap-3 py-5 bg-white dark:bg-slate-900 rounded-xl border border-indigo-200 dark:border-indigo-900">
+            {profile?.pin ? (
+              <>
+                {profile.pin.split("").map((digit, i) => (
+                  <div
+                    key={i}
+                    className="w-14 h-16 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-md"
+                  >
+                    {digit}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <p className="text-sm text-slate-400">{t("noPinAssigned")}</p>
+            )}
+          </div>
+          {profile?.pin && (
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <code className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg font-mono text-sm font-bold tracking-widest text-slate-900 dark:text-white">
+                {profile.pin}
+              </code>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(profile?.pin || "");
+                  setPinCopied(true);
+                  toast.success("PIN copied to clipboard");
+                  setTimeout(() => setPinCopied(false), 2000);
+                }}
+                className="gap-1.5"
+              >
+                {pinCopied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                {t("copyToClipboard")}
+              </Button>
+            </div>
+          )}
         </Card>
 
         {/* Account Overview */}

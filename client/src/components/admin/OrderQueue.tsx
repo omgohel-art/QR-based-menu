@@ -62,11 +62,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Clock, CheckCircle } from "lucide-react";
+import { Clock, CheckCircle, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { OrderGridSkeleton } from "@/components/Skeletons";
 import { useSoundSettings } from "@/contexts/SoundSettingsContext";
 import { notificationSound } from "@/services/notificationSound";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 
 interface OrderQueueProps {
   highlightOrderId?: number | null;
@@ -74,6 +75,7 @@ interface OrderQueueProps {
 
 export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
   const queryClient = useQueryClient();
+  const { t, statusLabel } = useStaffLanguage();
   const { enabled: soundEnabled, volume: soundVolume } = useSoundSettings();
   const lastOrderIdsRef = useRef<Set<number>>(new Set());
   const [selectedQueueOrder, setSelectedQueueOrder] = useState<QueueItem | null>(null);
@@ -149,10 +151,67 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
     }
   });
 
+  const printKOTMutation = useMutation({
+    mutationFn: async (order: QueueItem) => {
+      const kot = {
+        orderNumber: order.orderNumber,
+        table: order.tableLabel,
+        date: new Date(order.submittedAt).toLocaleDateString(),
+        time: new Date(order.submittedAt).toLocaleTimeString(),
+        type: "DINE-IN",
+        items: order.items.map((i) => ({
+          name: i.menuItemName,
+          qty: i.quantity,
+          variantSelections: [], // we will fill this once we fetch it properly
+          specialInstructions: "", // we will fill this once we fetch it properly
+        })),
+      };
+      
+      const { data: auth } = await supabase.auth.getSession();
+      const token = auth.session?.access_token || localStorage.getItem("token");
+      const res = await fetch("/api/print-kot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ kot })
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to print KOT");
+      }
+      return res.json();
+    },
+    onSuccess: (data: { queued?: boolean; message?: string }) => {
+      toast.success(data?.queued ? (data.message || "KOT queued for print agent") : "KOT printed successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    }
+  });
+
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: number; status: string }) => {
       const { error } = await supabase.from('orders').update({ orderStatus: status }).eq('id', orderId);
       if (error) throw error;
+      
+      // Reverse loyalty points if order is cancelled
+      if (status === 'cancelled') {
+        try {
+          // Get the order's session to find customerPhone
+          const { data: order } = await supabase.from('orders').select('sessionId, loyaltyPointsEarned, loyaltyReversed').eq('id', orderId).single();
+          if (order && order.loyaltyPointsEarned > 0 && !order.loyaltyReversed) {
+            const { data: session } = await supabase.from('sessions').select('customerPhone').eq('id', order.sessionId).single();
+            if (session?.customerPhone) {
+              await fetch('/api/loyalty/reverse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ customerPhone: session.customerPhone, orderId }),
+              });
+            }
+          }
+        } catch (err) {
+          console.error('Failed to reverse loyalty points:', err);
+        }
+      }
     },
     onMutate: async ({ orderId, status }) => {
       await queryClient.cancelQueries({ queryKey: ['orderQueue'] });
@@ -308,13 +367,13 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                  <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${
                     order.orderStatus === 'preparing' ? 'bg-amber-100 text-amber-700' :
                     order.orderStatus === 'ready' ? 'bg-blue-100 text-blue-700' :
                     order.orderStatus === 'delivered' ? 'bg-emerald-100 text-emerald-700' :
                     'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                   }`}>
-                    {order.orderStatus || 'received'}
+                    {statusLabel(order.orderStatus || 'received')}
                   </span>
                   <Badge variant="outline" className="text-xs font-mono">
                     #{order.orderNumber?.toString().padStart(3, '0') || order.id}
@@ -341,10 +400,10 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
                   setSelectedQueueOrder(order);
                   setShowQueueDetail(true);
                 }}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500 text-white font-medium rounded-lg transition-all duration-200 gap-2"
+                className="w-full min-h-12 text-base bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500 text-white font-semibold rounded-xl transition-all duration-200 gap-2"
               >
-                <CheckCircle className="w-3 h-3" />
-                Manage Items
+                <CheckCircle className="w-4 h-4" />
+                {t("manageItems")}
               </Button>
             </Card>
           ))}
@@ -352,8 +411,8 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
       ) : (
         <Card className="p-8 md:p-12 text-center bg-white dark:bg-slate-900">
           <CheckCircle className="w-10 md:w-12 h-10 md:h-12 text-slate-400 dark:text-slate-500 mx-auto mb-4" />
-          <p className="text-slate-600 dark:text-slate-400 font-medium">No pending orders</p>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Orders will appear here when customers place them</p>
+          <p className="text-slate-600 dark:text-slate-400 font-medium">{t("noPendingOrders")}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{t("ordersAppearHere")}</p>
         </Card>
       )}
 
@@ -361,8 +420,20 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
       <Dialog open={showQueueDetail} onOpenChange={(open) => { setShowQueueDetail(open); if (!open) setSelectedQueueOrder(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {selectedQueueOrder?.tableLabel} — #{selectedQueueOrder?.orderNumber?.toString().padStart(3, '0') || ''}
+            <DialogTitle className="flex justify-between items-center pr-8">
+              <span>{selectedQueueOrder?.tableLabel} — #{selectedQueueOrder?.orderNumber?.toString().padStart(3, '0') || ''}</span>
+              {selectedQueueOrder && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => printKOTMutation.mutate(selectedQueueOrder)}
+                  disabled={printKOTMutation.isPending}
+                  className="gap-2 min-h-10"
+                >
+                  <Printer className="w-4 h-4" />
+                  {t("printKot")}
+                </Button>
+              )}
             </DialogTitle>
           </DialogHeader>
           {selectedQueueOrder && (
@@ -399,7 +470,7 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
                       </p>
                     </div>
                     {item.delivered && (
-                      <span className="text-xs text-green-600 font-medium">Served</span>
+                      <span className="text-xs text-green-600 font-medium">{t("served")}</span>
                     )}
                   </div>
                 ))}
@@ -408,24 +479,23 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
               <div className="flex gap-2 pt-2">
                 <Button
                   variant="outline"
-                  size="sm"
+                  className="min-h-11"
                   onClick={() => { setShowQueueDetail(false); setSelectedQueueOrder(null); }}
                 >
-                  Close
+                  {t("close")}
                 </Button>
                 <div className="flex-1 flex gap-2">
                   {selectedQueueOrder && (() => {
                     const allDelivered = selectedQueueOrder.items?.every((i: QueueItemRow) => i.delivered);
                     const nextStatuses = [
-                      ...(!allDelivered ? [{ key: 'preparing' as const, label: 'Preparing', color: 'bg-amber-500 hover:bg-amber-600' }] : []),
-                      ...(!allDelivered ? [{ key: 'ready' as const, label: 'Ready', color: 'bg-blue-500 hover:bg-blue-600' }] : []),
-                      { key: 'delivered' as const, label: 'Served', color: 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500' },
+                      ...(!allDelivered ? [{ key: 'preparing' as const, label: t("preparing"), color: 'bg-amber-500 hover:bg-amber-600' }] : []),
+                      ...(!allDelivered ? [{ key: 'ready' as const, label: t("ready"), color: 'bg-blue-500 hover:bg-blue-600' }] : []),
+                      { key: 'delivered' as const, label: t("served"), color: 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500' },
                     ];
                     return nextStatuses.map(s => (
                       <Button
                         key={s.key}
-                        size="sm"
-                        className={`flex-1 text-white text-xs ${s.color}`}
+                        className={`flex-1 text-white text-sm min-h-11 font-semibold ${s.color}`}
                         onClick={() => {
                           updateOrderStatusMutation.mutate({ orderId: selectedQueueOrder.id, status: s.key });
                           if (s.key === 'delivered') {
@@ -447,20 +517,20 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
           {confirmDialog && (
             <div className="absolute inset-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm flex flex-col items-center justify-center z-50 rounded-lg p-6">
               <p className="text-base font-semibold text-slate-900 dark:text-white text-center mb-1">
-                {confirmDialog.action === 'serve' ? 'Confirm served' : 'Undo served'}
+                {confirmDialog.action === 'serve' ? t("confirmServed") : t("undoServed")}
               </p>
               <p className="text-sm text-slate-500 dark:text-slate-400 text-center mb-6">"{confirmDialog.itemName}"</p>
               <div className="flex gap-3 w-full">
                 <Button
                   variant="outline"
-                  className="flex-1"
+                  className="flex-1 min-h-11"
                   onClick={() => setConfirmDialog(null)}
                 >
-                  Cancel
+                  {t("cancel")}
                 </Button>
                 <Button
                   disabled={markItemDeliveredMutation.isPending || undoMarkItemDeliveredMutation.isPending}
-                  className={`flex-1 ${confirmDialog.action === 'serve' ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500' : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'} text-white font-medium rounded-lg transition-all duration-200 disabled:opacity-50`}
+                  className={`flex-1 min-h-11 ${confirmDialog.action === 'serve' ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:text-slate-900 dark:hover:bg-emerald-500' : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'} text-white font-medium rounded-lg transition-all duration-200 disabled:opacity-50`}
                   onClick={() => {
                     const item = confirmDialog;
                     setConfirmDialog(null);
@@ -494,7 +564,7 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
                     }
                   }}
                 >
-                  {confirmDialog.action === 'serve' ? 'Confirm' : 'Yes, Undo'}
+                  {confirmDialog.action === 'serve' ? t("confirm") : t("yesUndo")}
                 </Button>
               </div>
             </div>

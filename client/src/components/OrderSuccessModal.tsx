@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, ShoppingBag, ArrowRight } from "lucide-react";
+import { CheckCircle, ShoppingBag, ArrowRight, Star, Gift } from "lucide-react";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface OrderSuccessModalProps {
@@ -24,6 +24,9 @@ export default function OrderSuccessModal({
 }: OrderSuccessModalProps) {
   const [countdown, setCountdown] = useState(Math.ceil(AUTO_DISMISS_MS / 1000));
   const [cancelled, setCancelled] = useState(false);
+  const [earnedPoints, setEarnedPoints] = useState(0);
+  const [appliedCoupon, setAppliedCoupon] = useState<{ discountPercent: number; code: string } | null>(null);
+  const [spinsAwarded, setSpinsAwarded] = useState(0);
   const { fmtPrice } = useFormatCurrency();
   const cancelledRef = useRef(false);
   const onContinueRef = useRef(onContinue);
@@ -34,6 +37,17 @@ export default function OrderSuccessModal({
     if (!open) return;
     setCountdown(Math.ceil(AUTO_DISMISS_MS / 1000));
     setCancelled(false);
+    try {
+      const pts = parseInt(sessionStorage.getItem("loyaltyPointsEarned") || "0", 10);
+      if (pts > 0) setEarnedPoints(pts);
+      const spins = parseInt(sessionStorage.getItem("loyaltySpinsAwarded") || "0", 10);
+      if (spins > 0) setSpinsAwarded(spins);
+      const coupon = sessionStorage.getItem("loyaltyAppliedCoupon");
+      if (coupon) setAppliedCoupon(JSON.parse(coupon));
+    } catch {}
+    sessionStorage.removeItem("loyaltyPointsEarned");
+    sessionStorage.removeItem("loyaltySpinsAwarded");
+    sessionStorage.removeItem("loyaltyAppliedCoupon");
     const interval = setInterval(() => {
       setCountdown((c) => {
         if (c <= 1) {
@@ -135,6 +149,55 @@ export default function OrderSuccessModal({
                   <span className="font-semibold text-[#4A3428]">15–20 min</span>
                 </div>
               </motion.div>
+
+              {/* Loyalty Points Earned */}
+              {earnedPoints > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.55, duration: 0.3 }}
+                  className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-[14px] p-4 mb-6"
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Star className="w-4 h-4 text-amber-500" fill="currentColor" />
+                    <span className="text-sm font-bold text-[#4A3428]">Loyalty Points Earned</span>
+                  </div>
+                  <p className="text-lg font-bold text-[#C08A4D]">+{earnedPoints} Points</p>
+                </motion.div>
+              )}
+
+              {/* Lucky Spins Unlocked */}
+              {spinsAwarded > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.6, duration: 0.3 }}
+                  className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200/60 rounded-[14px] p-4 mb-6"
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-lg">🎰</span>
+                    <span className="text-sm font-bold text-[#4A3428]">Lucky Spin Unlocked!</span>
+                  </div>
+                  <p className="text-lg font-bold text-orange-600">+{spinsAwarded} Lucky Spin{spinsAwarded !== 1 ? "s" : ""}</p>
+                  <p className="text-[11px] text-[#8B7E72] mt-1">Spin the wheel to win rewards!</p>
+                </motion.div>
+              )}
+
+              {/* Coupon Unlocked */}
+              {appliedCoupon && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.6, duration: 0.3 }}
+                  className="bg-green-50 border border-green-200/60 rounded-[14px] p-4 mb-6"
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Gift className="w-4 h-4 text-green-500" />
+                    <span className="text-sm font-bold text-green-700">Coupon Applied</span>
+                  </div>
+                  <p className="text-sm text-green-600">{appliedCoupon.discountPercent}% OFF — {appliedCoupon.code}</p>
+                </motion.div>
+              )}
 
               {/* Buttons */}
               <motion.div

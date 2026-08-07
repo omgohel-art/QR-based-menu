@@ -66,8 +66,7 @@ function buildInvoiceMessage(data: {
 
   if (data.reviewLink) {
     lines.push("");
-    lines.push("Enjoyed your experience?");
-    lines.push("Leave us a review:");
+    lines.push("⭐ Enjoyed your meal? Leave us a review:");
     lines.push(data.reviewLink);
   }
 

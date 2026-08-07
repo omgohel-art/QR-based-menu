@@ -74,6 +74,18 @@ CREATE TABLE orders (
 CREATE INDEX "sessionId_idx" ON orders("sessionId");
 CREATE INDEX "submissionId_idx" ON orders("submissionId");
 
+CREATE TABLE "serviceRequests" (
+  id SERIAL PRIMARY KEY,
+  "tableCode" VARCHAR(32) NOT NULL,
+  "requestType" VARCHAR(32) NOT NULL,
+  "requestLabel" VARCHAR(64) NOT NULL,
+  status VARCHAR(32) DEFAULT 'pending' NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX "serviceRequests_tableCode_idx" ON "serviceRequests"("tableCode");
+CREATE INDEX "serviceRequests_status_idx" ON "serviceRequests"("status");
+
 CREATE TABLE "orderItems" (
   id SERIAL PRIMARY KEY,
   "orderId" INTEGER NOT NULL,

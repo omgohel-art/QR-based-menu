@@ -53,6 +53,7 @@ type BusinessData = {
   averageRating: number | null;
   serviceChargePercentage: number;
   notifEnabled: boolean;
+  reservationEnabled: boolean;
 };
 
 export default function BusinessSettings() {
@@ -99,6 +100,7 @@ export default function BusinessSettings() {
     averageRating: "" as string | number,
     serviceChargePercentage: 0,
     notifEnabled: true,
+    reservationEnabled: false,
   });
 
   const [gstError, setGstError] = useState("");
@@ -130,6 +132,7 @@ export default function BusinessSettings() {
         averageRating: settings.averageRating || "",
         serviceChargePercentage: settings.serviceChargePercentage ?? 0,
         notifEnabled: settings.notifEnabled ?? true,
+        reservationEnabled: settings.reservationEnabled ?? false,
       });
     }
   }, [settings]);
@@ -173,6 +176,7 @@ export default function BusinessSettings() {
         upiId: form.upiId.trim(),
         serviceChargePercentage: form.serviceChargePercentage,
         notifEnabled: form.notifEnabled,
+        reservationEnabled: form.reservationEnabled,
         updatedAt: new Date().toISOString(),
       };
       if (!payload.restaurantName) throw new Error("Restaurant Name is required");
@@ -383,6 +387,25 @@ export default function BusinessSettings() {
             />
             <p className="text-xs text-slate-500">Percentage added to subtotal as service charge</p>
           </div>
+          <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg">
+            <div>
+              <Label className="text-base font-medium">Table Reservations</Label>
+              <p className="text-sm text-slate-500 mt-0.5">
+                {form.reservationEnabled ? "Customers can book a table before visiting" : "Allow customers to reserve a table in advance"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateField("reservationEnabled", !form.reservationEnabled)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                form.reservationEnabled ? "bg-emerald-500" : "bg-slate-300"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                form.reservationEnabled ? "translate-x-6" : "translate-x-1"
+              }`} />
+            </button>
+          </div>
         </div>
       </Card>
 
@@ -527,13 +550,26 @@ export default function BusinessSettings() {
           <div className="space-y-2">
             <Label>Printer IP Address</Label>
             <Input value={form.printerIp} onChange={(e) => updateField("printerIp", e.target.value)} placeholder="192.168.1.100" />
-            <p className="text-xs text-slate-500">Find this on the printer's network config page</p>
+            <p className="text-xs text-slate-500">Find this on the printer's network config page (LAN IP)</p>
           </div>
           <div className="space-y-2">
             <Label>Printer Port</Label>
             <Input type="number" value={form.printerPort} onChange={(e) => updateField("printerPort", Number(e.target.value) || DEFAULT_PRINTER_PORT)} placeholder={String(DEFAULT_PRINTER_PORT)} />
             <p className="text-xs text-slate-500">Default: {DEFAULT_PRINTER_PORT}</p>
           </div>
+        </div>
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 space-y-1">
+          <p className="font-semibold">Cloud hosting? Use the local print agent</p>
+          <p>
+            The app cannot reach your café LAN printer from the internet. On a PC connected to the same Wi‑Fi as the printer, set{" "}
+            <code className="bg-white/70 px-1 rounded">PRINT_AGENT_SECRET</code> +{" "}
+            <code className="bg-white/70 px-1 rounded">MAMA_API_URL</code>, then run{" "}
+            <code className="bg-white/70 px-1 rounded">node scripts/print-agent.mjs</code>.
+          </p>
+          <p>
+            If the server itself runs on the café LAN, set{" "}
+            <code className="bg-white/70 px-1 rounded">ALLOW_LAN_PRINT=true</code> instead.
+          </p>
         </div>
       </Card>
 

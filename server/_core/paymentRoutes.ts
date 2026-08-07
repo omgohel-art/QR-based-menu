@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { razorpayBreaker, fire } from "./circuitBreaker";
+import { awardLoyaltyPoints } from "./loyaltyService";
+import { validateCoupon, applyCoupon } from "./couponService";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
@@ -139,17 +141,14 @@ async function loadAndVerifyOrderData(req: any) {
 
   const trimmedName = customerName ? String(customerName).trim() : "";
   const trimmedPhone = customerPhone ? String(customerPhone).trim() : "";
+  const appliedCouponCode = req.body.appliedCouponCode ? String(req.body.appliedCouponCode).trim() : "";
 
-  if (!trimmedName) {
-    return { error: "Customer name is required" };
-  }
-  if (trimmedName.length > 128) {
+  const sanitizedPhone = trimmedPhone ? sanitizePhone(trimmedPhone) : "";
+
+  if (trimmedName && trimmedName.length > 128) {
     return { error: "Customer name is too long" };
   }
-  if (!trimmedPhone) {
-    return { error: "Customer phone number is required" };
-  }
-  if (!validateIndianPhone(trimmedPhone)) {
+  if (trimmedPhone && !validateIndianPhone(trimmedPhone)) {
     return { error: "Invalid phone number. Enter a valid 10-digit Indian mobile number." };
   }
 
@@ -173,7 +172,9 @@ async function loadAndVerifyOrderData(req: any) {
     .select("*")
     .eq("tableId", tableData.id)
     .eq("status", "open")
-    .single();
+    .order("createdAt", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (!sessionData) {
     return { error: "No active session" };
@@ -224,13 +225,65 @@ async function loadAndVerifyOrderData(req: any) {
     serviceChargePercentage: parseFloat(bizSettings?.serviceChargePercentage?.toString() || "0"),
   };
 
-  return { tableData, sessionData, menuItemMap, items, submissionId, deviceToken, settings: serverSettings, customerName: trimmedName, customerPhone: sanitizePhone(trimmedPhone) };
+  return { tableData, sessionData, menuItemMap, items, submissionId, deviceToken, settings: serverSettings, customerName: trimmedName, customerPhone: sanitizePhone(trimmedPhone), appliedCouponCode };
 }
 
 async function createOrderFromValidatedData(data: any, overrides?: { method?: string; status?: string }) {
-  const { sessionData, items, submissionId, deviceToken, menuItemMap, settings, customerName, customerPhone } = data;
+  const { sessionData, items, submissionId, deviceToken, menuItemMap, settings, customerName, customerPhone, appliedCouponCode } = data;
   const supabase = getSupabase();
   const db = supabase as any;
+
+  // Calculate subtotal
+  let totalAdded = 0;
+  for (const item of items) {
+    const menuItem = menuItemMap.get(item.menuItemId);
+    const price = parseFloat(menuItem.price.toString());
+    totalAdded += price * item.quantity;
+  }
+
+  // Calculate tax and service charge
+  const scRate = settings?.serviceChargePercentage || 0;
+  const gstEnabled = settings?.gstEnabled || false;
+  const gstRate = settings?.gstRate || 0;
+  const scAmt = totalAdded * (scRate / 100);
+  const taxable = gstEnabled ? totalAdded + scAmt : 0;
+  const taxAmt = taxable * (gstRate / 100);
+  const subtotalWithTax = totalAdded + scAmt + taxAmt;
+
+  // Apply coupon if provided
+  let couponDiscount = 0;
+  let couponId: number | null = null;
+  let couponCode: string | null = null;
+  let finalTotal = subtotalWithTax;
+
+  if (appliedCouponCode && customerPhone) {
+    try {
+      const couponResult = await validateCoupon(appliedCouponCode, customerPhone);
+      if (couponResult.valid && couponResult.coupon) {
+        if (couponResult.coupon.rewardType === "discount") {
+          couponDiscount = Math.round(subtotalWithTax * (couponResult.coupon.discountPercent / 100) * 100) / 100;
+          finalTotal = subtotalWithTax - couponDiscount;
+        } else if (couponResult.coupon.rewardType === "freeItem") {
+          // Free item coupon: find a matching item and discount its price
+          // For simplicity, apply as a discount of the cheapest item
+          const prices = items.map((item: any) => {
+            const menuItem = menuItemMap.get(item.menuItemId);
+            return parseFloat(menuItem.price.toString()) * item.quantity;
+          });
+          if (prices.length > 0) {
+            couponDiscount = Math.min(...prices);
+            finalTotal = subtotalWithTax - couponDiscount;
+          }
+        }
+        couponId = couponResult.coupon.id;
+        couponCode = couponResult.coupon.code;
+      }
+    } catch (err) {
+      console.error("[Coupon] Validation error:", err);
+    }
+  }
+
+  finalTotal = Math.max(0, finalTotal);
 
   let orderNumber: number | null = null;
   try {
@@ -259,12 +312,38 @@ async function createOrderFromValidatedData(data: any, overrides?: { method?: st
     paymentStatus: overrides?.status || "paid",
   };
   if (orderNumber !== null) insertPayload.orderNumber = orderNumber;
+  if (couponCode) insertPayload.appliedCouponCode = couponCode;
+  if (couponDiscount) insertPayload.couponDiscount = couponDiscount;
+  if (finalTotal !== null && finalTotal !== undefined) insertPayload.finalTotalAfterDiscount = finalTotal;
 
-  const { data: newOrder, error: orderError } = await db
+  let newOrder: any = null;
+  let orderError: any = null;
+
+  ({ data: newOrder, error: orderError } = await db
     .from("orders")
     .insert(insertPayload)
     .select()
-    .single();
+    .single());
+
+  const orderErrorText = orderError ? JSON.stringify(orderError) : "";
+  const schemaError = /appliedCouponCode|couponDiscount|finalTotalAfterDiscount|schema cache|column .* does not exist/i.test(orderErrorText);
+
+  if (orderError && schemaError) {
+    const fallbackPayload: any = {
+      sessionId: sessionData.id,
+      submissionId,
+      deviceToken,
+      paymentMethod: overrides?.method || "online",
+      paymentStatus: overrides?.status || "paid",
+    };
+    if (orderNumber !== null) fallbackPayload.orderNumber = orderNumber;
+
+    ({ data: newOrder, error: orderError } = await db
+      .from("orders")
+      .insert(fallbackPayload)
+      .select()
+      .single());
+  }
 
   if (orderError) {
     // Handle unique constraint violation on submissionId (race condition duplicate)
@@ -281,11 +360,9 @@ async function createOrderFromValidatedData(data: any, overrides?: { method?: st
     throw orderError;
   }
 
-  let totalAdded = 0;
   const orderItemsToInsert = items.map((item: any) => {
     const menuItem = menuItemMap.get(item.menuItemId);
     const price = parseFloat(menuItem.price.toString());
-    totalAdded += price * item.quantity;
     const insertItem: any = {
       orderId: newOrder.id,
       menuItemId: item.menuItemId,
@@ -356,10 +433,46 @@ async function createOrderFromValidatedData(data: any, overrides?: { method?: st
     const updatePayload: any = {};
     if (customerName) updatePayload.customerName = customerName;
     if (customerPhone) updatePayload.customerPhone = customerPhone;
-    await db.from("sessions").update(updatePayload).eq("id", sessionData.id);
+    if (Object.keys(updatePayload).length > 0) {
+      await db.from("sessions").update(updatePayload).eq("id", sessionData.id);
+    }
   }
 
-  return { success: true, orderId: newOrder.id, orderNumber: newOrder.orderNumber ?? newOrder.id };
+  // Award loyalty points immediately (on the full amount before discount)
+  let loyaltyResult = { earned: 0, totalPoints: 0, milestoneReached: false, newCouponsCount: 0, spinsAwarded: 0, newSpinMilestones: [] as number[] };
+  if (customerPhone && totalAdded > 0) {
+    try {
+      loyaltyResult = await awardLoyaltyPoints(customerPhone, customerName || undefined, totalAdded, newOrder.id);
+      await db.from("orders").update({
+        loyaltyPointsEarned: loyaltyResult.earned,
+        loyaltyAwardedAt: new Date().toISOString(),
+      }).eq("id", newOrder.id);
+    } catch (err) {
+      console.error("[Loyalty] Failed to award points on order creation:", err);
+    }
+  }
+
+  // Mark coupon as used after successful order creation
+  if (couponId) {
+    try {
+      await applyCoupon(couponId, newOrder.id);
+    } catch (err) {
+      console.error("[Coupon] Failed to mark coupon as used:", err);
+    }
+  }
+
+  return {
+    success: true,
+    orderId: newOrder.id,
+    orderNumber: newOrder.orderNumber ?? newOrder.id,
+    loyaltyPointsEarned: loyaltyResult.earned,
+    loyaltyTotalPoints: loyaltyResult.totalPoints,
+    loyaltyMilestoneReached: loyaltyResult.milestoneReached,
+    loyaltyNewCouponsCount: loyaltyResult.newCouponsCount,
+    spinsAwarded: loyaltyResult.spinsAwarded,
+    newSpinMilestones: loyaltyResult.newSpinMilestones,
+    couponApplied: couponCode ? { code: couponCode, discount: couponDiscount, finalTotal } : null,
+  };
 }
 
 // Razorpay payment verification
@@ -420,7 +533,30 @@ router.post("/api/payment/verify", async (req, res) => {
       const scAmt = calcTotal * (scRate / 100);
       const taxable = gstEnabled ? calcTotal + scAmt : 0;
       const taxAmt = taxable * (gstRate / 100);
-      const expectedPaise = Math.round((calcTotal + scAmt + taxAmt) * 100);
+      const subtotalWithTax = calcTotal + scAmt + taxAmt;
+
+      // Apply coupon discount if applicable
+      let couponDiscountPaise = 0;
+      if (v.appliedCouponCode && v.customerPhone) {
+        try {
+          const couponResult = await validateCoupon(v.appliedCouponCode, v.customerPhone);
+          if (couponResult.valid && couponResult.coupon) {
+            if (couponResult.coupon.rewardType === "discount") {
+              couponDiscountPaise = Math.round(subtotalWithTax * (couponResult.coupon.discountPercent / 100) * 100);
+            } else if (couponResult.coupon.rewardType === "freeItem") {
+              const prices = v.items.map((item: any) => {
+                const mi = v.menuItemMap.get(item.menuItemId);
+                return parseFloat(mi.price.toString()) * item.quantity;
+              });
+              if (prices.length > 0) {
+                couponDiscountPaise = Math.round(Math.min(...prices) * 100);
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const expectedPaise = Math.round(subtotalWithTax * 100) - couponDiscountPaise;
 
       if (amountPaid !== expectedPaise) {
         return res.status(400).json({ error: "Payment amount mismatch" });
@@ -458,7 +594,7 @@ router.post("/api/order/counter-submit", async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     console.error("Counter order submission failed:", err);
-    return res.status(500).json({ error: "Order submission failed" });
+    return res.status(500).json({ error: err?.message || "Order submission failed" });
   }
 });
 

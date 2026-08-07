@@ -120,6 +120,45 @@ export type MenuItem = typeof menuItems.$inferSelect;
 export type InsertMenuItem = typeof menuItems.$inferInsert;
 
 /**
+ * MenuItemVariant entity: defines modifier groups (e.g. Size, Milk Type) for a menu item
+ */
+export const menuItemVariants = pgTable("menuItemVariants", {
+  id: serial("id").primaryKey(),
+  menuItemId: integer("menuItemId").notNull().references(() => menuItems.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 128 }).notNull(),
+  required: boolean("required").default(false).notNull(),
+  multiSelect: boolean("multiSelect").default(false).notNull(),
+  maxSelections: integer("maxSelections").default(1).notNull(),
+  displayOrder: integer("displayOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  menuItemIdIdx: index("miv_menuItemId_idx").on(table.menuItemId),
+}));
+
+export type MenuItemVariant = typeof menuItemVariants.$inferSelect;
+export type InsertMenuItemVariant = typeof menuItemVariants.$inferInsert;
+
+/**
+ * MenuItemVariantOption entity: defines options within a variant group (e.g. Large, Oat Milk)
+ */
+export const menuItemVariantOptions = pgTable("menuItemVariantOptions", {
+  id: serial("id").primaryKey(),
+  variantId: integer("variantId").notNull().references(() => menuItemVariants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 128 }).notNull(),
+  priceAdjustment: decimal("priceAdjustment", { precision: 10, scale: 2 }).default("0").notNull(),
+  isAvailable: boolean("isAvailable").default(true).notNull(),
+  displayOrder: integer("displayOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  variantIdIdx: index("mivo_variantId_idx").on(table.variantId),
+}));
+
+export type MenuItemVariantOption = typeof menuItemVariantOptions.$inferSelect;
+export type InsertMenuItemVariantOption = typeof menuItemVariantOptions.$inferInsert;
+
+/**
  * Order entity: represents a single order submission.
  */
 export const orders = pgTable("orders", {
@@ -131,6 +170,12 @@ export const orders = pgTable("orders", {
   orderNumber: integer("orderNumber").notNull().unique(),
   paymentMethod: varchar("paymentMethod", { length: 32 }),
   paymentStatus: varchar("paymentStatus", { length: 32 }).default("pending").notNull(),
+  loyaltyPointsEarned: integer("loyaltyPointsEarned").default(0),
+  loyaltyAwardedAt: timestamp("loyaltyAwardedAt"),
+  loyaltyReversed: boolean("loyaltyReversed").default(false),
+  appliedCouponCode: varchar("appliedCouponCode", { length: 32 }),
+  couponDiscount: decimal("couponDiscount", { precision: 10, scale: 2 }).default(0),
+  finalTotalAfterDiscount: decimal("finalTotalAfterDiscount", { precision: 10, scale: 2 }).default(0),
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => ({
@@ -144,6 +189,22 @@ export const orders = pgTable("orders", {
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = typeof orders.$inferInsert;
 
+export const serviceRequests = pgTable("serviceRequests", {
+  id: serial("id").primaryKey(),
+  tableCode: varchar("tableCode", { length: 32 }).notNull(),
+  requestType: varchar("requestType", { length: 32 }).notNull(),
+  requestLabel: varchar("requestLabel", { length: 64 }).notNull(),
+  status: varchar("status", { length: 32 }).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  tableCodeIdx: index("serviceRequests_tableCode_idx").on(table.tableCode),
+  statusIdx: index("serviceRequests_status_idx").on(table.status),
+}));
+
+export type ServiceRequest = typeof serviceRequests.$inferSelect;
+export type InsertServiceRequest = typeof serviceRequests.$inferInsert;
+
 /**
  * OrderItem entity: represents individual items within an order.
  */
@@ -153,6 +214,7 @@ export const orderItems = pgTable("orderItems", {
   menuItemId: integer("menuItemId").notNull().references(() => menuItems.id, { onDelete: "restrict" }),
   quantity: integer("quantity").notNull(),
   priceAtOrderTime: decimal("priceAtOrderTime", { precision: 10, scale: 2 }).notNull(),
+  variantSelections: json("variantSelections"),
   specialInstructions: text("specialInstructions"),
   delivered: boolean("delivered").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -297,6 +359,10 @@ export const businessSettings = pgTable("businessSettings", {
   accent_color: varchar("accent_color", { length: 20 }).default("#C08A4D"),
   notif_enabled: boolean("notif_enabled").default(true),
   saveInvoiceCustomerInfo: boolean("saveInvoiceCustomerInfo").default(true).notNull(),
+  reservationEnabled: boolean("reservationEnabled").default(false).notNull(),
+  loyaltyEnabled: boolean("loyaltyEnabled").default(true).notNull(),
+  loyaltyRewardPercent: integer("loyaltyRewardPercent").default(5).notNull(),
+  loyaltyPointsThreshold: integer("loyaltyPointsThreshold").default(100).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
@@ -326,6 +392,7 @@ export const userProfiles = pgTable("user_profiles", {
   shiftTiming: varchar("shift_timing", { length: 64 }),
   reportingManager: varchar("reporting_manager", { length: 128 }),
   employmentStatus: varchar("employment_status", { length: 20 }).default("active"),
+  pin: varchar("pin", { length: 4 }),
   emergencyContactName: varchar("emergency_contact_name", { length: 128 }),
   emergencyContactPhone: varchar("emergency_contact_phone", { length: 32 }),
   emergencyContactRelationship: varchar("emergency_contact_relationship", { length: 64 }),
@@ -424,3 +491,131 @@ export const inventoryHistory = pgTable("inventoryHistory", {
 
 export type InventoryHistoryEntry = typeof inventoryHistory.$inferSelect;
 export type InsertInventoryHistoryEntry = typeof inventoryHistory.$inferInsert;
+
+/**
+ * LoyaltyWallet: per-customer loyalty balance.
+ */
+export const loyaltyWallets = pgTable("loyaltyWallets", {
+  id: serial("id").primaryKey(),
+  customerPhone: varchar("customerPhone", { length: 20 }).notNull().unique(),
+  customerName: varchar("customerName", { length: 128 }),
+  currentPoints: integer("currentPoints").default(0).notNull(),
+  lifetimeEarned: integer("lifetimeEarned").default(0).notNull(),
+  lifetimeRedeemed: integer("lifetimeRedeemed").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  phoneIdx: index("loyaltyWallets_phone_idx").on(table.customerPhone),
+}));
+
+export type LoyaltyWallet = typeof loyaltyWallets.$inferSelect;
+export type InsertLoyaltyWallet = typeof loyaltyWallets.$inferInsert;
+
+/**
+ * LoyaltyTransaction: audit log for every point earn/redeem.
+ */
+export const loyaltyTransactions = pgTable("loyaltyTransactions", {
+  id: serial("id").primaryKey(),
+  walletId: integer("walletId").notNull().references(() => loyaltyWallets.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 16 }).notNull(),
+  points: integer("points").notNull(),
+  orderId: integer("orderId"),
+  orderAmount: decimal("orderAmount", { precision: 10, scale: 2 }),
+  description: text("description"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  walletIdIdx: index("loytxn_walletId_idx").on(table.walletId),
+  typeIdx: index("loytxn_type_idx").on(table.type),
+  orderIdIdx: index("loytxn_orderId_idx").on(table.orderId),
+  loytxnTypeCheck: check("loytxn_type_check", sql`${table.type} IN ('earn', 'redeem', 'adjust')`),
+}));
+
+export type LoyaltyTransaction = typeof loyaltyTransactions.$inferSelect;
+export type InsertLoyaltyTransaction = typeof loyaltyTransactions.$inferInsert;
+
+/**
+ * LoyaltyCoupon: unified coupon system - generated from loyalty milestones and lucky spin.
+ */
+export const loyaltyCoupons = pgTable("loyaltyCoupons", {
+  id: serial("id").primaryKey(),
+  walletId: integer("walletId").notNull().references(() => loyaltyWallets.id, { onDelete: "cascade" }),
+  code: varchar("code", { length: 32 }).notNull().unique(),
+  discountPercent: integer("discountPercent").default(5).notNull(),
+  status: varchar("status", { length: 16 }).default("active").notNull(),
+  redeemedAt: timestamp("redeemedAt"),
+  redeemedOrderId: integer("redeemedOrderId"),
+  expiresAt: timestamp("expiresAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  source: varchar("source", { length: 16 }).default("loyalty"),
+  rewardType: varchar("rewardType", { length: 16 }).default("discount"),
+  rewardLabel: varchar("rewardLabel", { length: 128 }),
+}, (table) => ({
+  walletIdIdx: index("loycoupon_walletId_idx").on(table.walletId),
+  codeIdx: index("loycoupon_code_idx").on(table.code),
+  statusIdx: index("loycoupon_status_idx").on(table.status),
+  loycouponStatusCheck: check("loycoupon_status_check", sql`${table.status} IN ('active', 'used', 'expired')`),
+  loycouponSourceCheck: check("loycoupon_source_check", sql`${table.source} IN ('loyalty', 'spin')`),
+  loycouponRewardTypeCheck: check("loycoupon_rewardtype_check", sql`${table.rewardType} IN ('discount', 'freeItem', 'none')`),
+}));
+
+export type LoyaltyCoupon = typeof loyaltyCoupons.$inferSelect;
+export type InsertLoyaltyCoupon = typeof loyaltyCoupons.$inferInsert;
+
+/**
+ * Reservation entity: table bookings.
+ */
+export const reservations = pgTable("reservations", {
+  id: serial("id").primaryKey(),
+  customerName: varchar("customerName", { length: 128 }).notNull(),
+  customerPhone: varchar("customerPhone", { length: 20 }).notNull(),
+  date: varchar("date", { length: 10 }).notNull(),
+  time: varchar("time", { length: 10 }).notNull(),
+  pax: integer("pax").notNull(),
+  status: varchar("status", { length: 20 }).default("pending").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  dateIdx: index("reservations_date_idx").on(table.date),
+  statusIdx: index("reservations_status_idx").on(table.status),
+  resStatusCheck: check("reservations_status_check", sql`${table.status} IN ('pending', 'confirmed', 'cancelled', 'completed')`),
+}));
+
+export type Reservation = typeof reservations.$inferSelect;
+export type InsertReservation = typeof reservations.$inferInsert;
+
+/**
+ * Recipe entity: maps menu items to inventory items for automatic stock deduction.
+ */
+export const recipes = pgTable("recipes", {
+  id: serial("id").primaryKey(),
+  menuItemId: integer("menuItemId").notNull().references(() => menuItems.id, { onDelete: "cascade" }),
+  inventoryItemId: integer("inventoryItemId").notNull().references(() => inventoryItems.id, { onDelete: "cascade" }),
+  quantityRequired: decimal("quantityRequired", { precision: 12, scale: 3 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => ({
+  menuItemIdIdx: index("recipe_menuItemId_idx").on(table.menuItemId),
+}));
+
+export type Recipe = typeof recipes.$inferSelect;
+export type InsertRecipe = typeof recipes.$inferInsert;
+
+/**
+ * AttendanceRecord entity: tracks staff clock-in/clock-out events.
+ */
+export const attendanceRecords = pgTable("attendanceRecords", {
+  id: serial("id").primaryKey(),
+  userId: varchar("userId", { length: 64 }).notNull(),
+  date: varchar("date", { length: 10 }).notNull(),
+  clockIn: timestamp("clockIn"),
+  clockOut: timestamp("clockOut"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("attendance_userId_idx").on(table.userId),
+  dateIdx: index("attendance_date_idx").on(table.date),
+}));
+
+export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
+export type InsertAttendanceRecord = typeof attendanceRecords.$inferInsert;
+

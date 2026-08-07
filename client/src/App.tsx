@@ -10,6 +10,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { SoundSettingsProvider } from "./contexts/SoundSettingsContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { NetworkStatusProvider } from "./contexts/NetworkStatusContext";
+import { StaffLanguageProvider } from "./contexts/StaffLanguageContext";
 import OfflineBanner from "./components/OfflineBanner";
 import NotificationToastQueue from "./components/notifications/NotificationToast";
 import Login from "./pages/Login";
@@ -40,6 +41,7 @@ const TermsConditions = lazy(() => import("./pages/marketing/TermsConditions"));
 const RefundPolicy = lazy(() => import("./pages/marketing/RefundPolicy"));
 const ShippingPolicy = lazy(() => import("./pages/marketing/ShippingPolicy"));
 const FAQ = lazy(() => import("./pages/marketing/FAQ"));
+const ReservationPage = lazy(() => import("./pages/ReservationPage"));
 
 // Analytics drill-down pages
 const RevenueAnalytics = lazy(() => import("./pages/analytics/RevenueAnalytics"));
@@ -49,6 +51,9 @@ const BillingAnalytics = lazy(() => import("./pages/analytics/BillingAnalytics")
 const RevenueChartAnalytics = lazy(() => import("./pages/analytics/RevenueChartAnalytics"));
 const PopularItemsAnalytics = lazy(() => import("./pages/analytics/PopularItemsAnalytics"));
 const TableBreakdownAnalytics = lazy(() => import("./pages/analytics/TableBreakdownAnalytics"));
+const CustomerRewardsPage = lazy(() => import("./pages/rewards/CustomerRewardsPage"));
+const LuckySpinPage = lazy(() => import("./pages/spin/LuckySpinPage"));
+const MyCouponsPage = lazy(() => import("./pages/coupons/MyCouponsPage"));
 
 function Router() {
   return (
@@ -93,6 +98,10 @@ function Router() {
       <Route path={"/table/:tableCode/order/:orderId"} component={OrderTrackingPage} />
       <Route path={"/table/:tableCode/payment/failed"} component={OrderFailedPage} />
       <Route path={"/table/:tableCode"} component={CustomerMenu} />
+      <Route path={"/table/:tableCode/rewards"} component={CustomerRewardsPage} />
+      <Route path={"/table/:tableCode/coupons"} component={MyCouponsPage} />
+      <Route path={"/table/:tableCode/spin"} component={LuckySpinPage} />
+      <Route path={"/welcome"} component={Home} />
       <Route path={"/features"} component={Features} />
       <Route path={"/pricing"} component={Pricing} />
       <Route path={"/about"} component={AboutUs} />
@@ -101,6 +110,7 @@ function Router() {
       <Route path={"/terms"} component={TermsConditions} />
       <Route path={"/refund"} component={RefundPolicy} />
       <Route path={"/shipping"} component={ShippingPolicy} />
+      <Route path={"/reserve"} component={ReservationPage} />
       <Route path={"/faq"} component={FAQ} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
@@ -115,6 +125,7 @@ function App() {
       <ThemeProvider>
         <TooltipProvider>
           <AuthProvider>
+            <StaffLanguageProvider>
             <NetworkStatusProvider>
               <NotificationProvider>
                 <SoundSettingsProvider>
@@ -128,6 +139,7 @@ function App() {
                 </SoundSettingsProvider>
               </NotificationProvider>
             </NetworkStatusProvider>
+            </StaffLanguageProvider>
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

@@ -6,14 +6,16 @@ import { formatPrice } from "@/lib/utils";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { Button } from "@/components/ui/button";
 import { useCart, MAX_ITEM_QUANTITY } from "@/contexts/CartContext";
-import { Search, Plus, Minus, ShoppingBag, UtensilsCrossed, ArrowLeft } from "lucide-react";
+import { Search, Plus, Minus, ShoppingBag, UtensilsCrossed, ArrowLeft, Trophy, Star, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import Footer from "@/components/marketing/Footer";
 import SplashScreen from "@/components/SplashScreen";
+import { useLoyalty, calculatePoints, useSpinStatus } from "@/hooks/useLoyalty";
 
 import ImageGallery from "@/components/ImageGallery";
 import OrderStatusBanner from "@/components/OrderStatusBanner";
+import CallWaiterButton from "@/components/CallWaiterButton";
 import { toast } from "sonner";
 
 interface MenuItemData {
@@ -126,6 +128,8 @@ export default function CustomerMenu() {
   const { user, profile } = useAuth();
   const isStaff = profile?.role === "admin" || profile?.role === "staff";
   const fromAdmin = isStaff && sessionStorage.getItem("fromAdmin") === "true";
+  const { hasPhone, wallet, activeCoupons, pointsToNext, progressPercent, nextReward } = useLoyalty(tableCode);
+  const { data: spinData } = useSpinStatus(wallet?.customerPhone);
 
   useEffect(() => { if (tableCode) setTableCode(tableCode); }, [tableCode, setTableCode]);
 
@@ -264,10 +268,10 @@ export default function CustomerMenu() {
 
   const groupedItems = useMemo(() => {
     if (!menu) return [];
-    let items = menu.items;
+    const categories = Array.isArray(menu.categories) ? menu.categories : [];
+    let items = Array.isArray(menu.items) ? menu.items : [];
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase().replace(/\s+/g, " ").trim();
-      const categories = menu.categories;
       const catIds = categories
         .filter((c: any) => c.name.toLowerCase().includes(q))
         .map((c: any) => c.id);
@@ -280,7 +284,7 @@ export default function CustomerMenu() {
     }
     if (debouncedSearch) return [{ category: null, items }];
 
-    return menu.categories
+    return categories
       .map((cat: any) => ({
         category: cat,
         items: items.filter((i: any) => i.categoryId === cat.id),
@@ -562,6 +566,104 @@ export default function CustomerMenu() {
 
       <OrderStatusBanner sessionId={session.session.id} tableCode={tableCode!} />
 
+      {/* Loyalty Card */}
+      <div className="px-4 pt-3 pb-1">
+        {bizSettings?.reservationEnabled && (
+          <button
+            onClick={() => window.location.href = "/reserve"}
+            className="w-full bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/60 rounded-[16px] p-4 shadow-[0_2px_12px_rgba(16,185,129,0.08)] text-left"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-emerald-900" style={{ fontFamily: "var(--font-caveat)", fontSize: "15px" }}>Reserve a Table</p>
+                  <p className="text-[11px] text-emerald-700">Book your spot before visiting</p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-emerald-400 shrink-0" />
+            </div>
+          </button>
+        )}
+      </div>
+
+      {/* Loyalty Card */}
+      <div className="px-4 pt-3 pb-1">
+        {hasPhone && wallet ? (
+          <button
+            onClick={() => navigate(`/table/${tableCode}/rewards`)}
+            className="w-full bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-[16px] p-4 shadow-[0_2px_12px_rgba(192,138,77,0.08)] text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <Star className="w-4 h-4 text-amber-600" fill="currentColor" />
+                </div>
+                <h3 className="text-sm font-bold text-[#4A3428]" style={{ fontFamily: "var(--font-caveat)", fontSize: "16px" }}>Loyalty Rewards</h3>
+                {activeCoupons.length > 0 && (
+                  <span className="text-[10px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full">
+                    {activeCoupons.length} coupon{activeCoupons.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {spinData && spinData.available > 0 && (
+                  <span className="text-[10px] font-bold text-white bg-orange-500 px-2 py-0.5 rounded-full">
+                    🎰 {spinData.available} spin{spinData.available !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {spinData && spinData.available > 0 && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); navigate(`/table/${tableCode}/spin`); }}
+                    className="text-[11px] font-semibold text-orange-600 hover:text-orange-700 underline underline-offset-2 cursor-pointer"
+                  >
+                    Spin
+                  </span>
+                )}
+                <span className="text-[11px] font-semibold text-amber-600 underline underline-offset-2">
+                  View Rewards
+                </span>
+              </div>
+            </div>
+            <div className="flex items-end justify-between mb-2">
+              <div>
+                <p className="text-2xl font-bold text-[#C08A4D]" style={{ fontFamily: "var(--font-caveat)" }}>{wallet.currentPoints}</p>
+                <p className="text-[11px] text-[#8B7E72]">Points</p>
+              </div>
+              <p className="text-[11px] text-[#8B7E72] text-right">
+                {pointsToNext} more to unlock {nextReward}% OFF
+              </p>
+            </div>
+            <div className="h-2 bg-amber-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-amber-400 to-orange-400 rounded-full transition-all duration-500"
+                style={{ width: `${Math.max(progressPercent, 2)}%` }}
+              />
+            </div>
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate(`/table/${tableCode}/rewards`)}
+            className="w-full bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-[16px] p-4 shadow-[0_2px_12px_rgba(192,138,77,0.08)] text-left"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                  <Star className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-[#4A3428]" style={{ fontFamily: "var(--font-caveat)", fontSize: "15px" }}>Loyalty Rewards</p>
+                  <p className="text-[11px] text-[#8B7E72]">Earn points on every order — view your rewards & spin</p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-amber-400 shrink-0" />
+            </div>
+          </button>
+        )}
+      </div>
+
       <div className="px-4 pt-3 pb-1">
         {bizSettings?.tagline && (
           <p className="text-sm text-[#8B7E72] italic">{bizSettings.tagline}</p>
@@ -733,6 +835,18 @@ export default function CustomerMenu() {
       <div className="mt-16">
         <Footer variant="menu" />
       </div>
+
+      {/* Rewards FAB */}
+      <button
+        onClick={() => navigate(`/table/${tableCode}/rewards`)}
+        className="fixed bottom-24 right-4 z-50 w-12 h-12 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-lg flex items-center justify-center hover:scale-105 transition-transform"
+        title="Loyalty Rewards"
+      >
+        <Trophy className="w-5 h-5" />
+      </button>
+
+      {/* Call Waiter FAB */}
+      <CallWaiterButton tableCode={tableCode} />
     </div>
     </>
   );

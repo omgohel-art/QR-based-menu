@@ -398,6 +398,27 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
 
   const deleteEmptyMutation = useMutation({
     mutationFn: async ({ sessionId, tableId }: { sessionId: number; tableId: number }) => {
+      // Reverse loyalty points for all orders in this session
+      try {
+        const { data: orders } = await supabase.from('orders').select('id, loyaltyPointsEarned, loyaltyReversed').eq('sessionId', sessionId);
+        if (orders) {
+          for (const order of orders) {
+            if (order.loyaltyPointsEarned > 0 && !order.loyaltyReversed) {
+              const { data: session } = await supabase.from('sessions').select('customerPhone').eq('id', sessionId).single();
+              if (session?.customerPhone) {
+                await fetch('/api/loyalty/reverse', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ customerPhone: session.customerPhone, orderId: order.id }),
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to reverse loyalty points:', err);
+      }
+      
       await supabase.from('sessions').update({ status: 'cancelled' }).eq('id', sessionId);
       await supabase.from('tables').update({ status: 'empty', activeSessionId: null }).eq('id', tableId);
     },

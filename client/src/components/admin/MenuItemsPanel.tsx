@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -6,13 +6,16 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import ImageUpload from "@/components/ImageUpload";
-import { Plus, Trash2, Pencil, Search, ChevronUp, ChevronDown, Ban, Loader2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Search, ChevronUp, ChevronDown, Ban, Loader2, Upload, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { parseMenuCsv, MENU_CSV_TEMPLATE } from "@/lib/menuCsv";
 
 export default function MenuItemsPanel() {
   const queryClient = useQueryClient();
   const { fmtPrice } = useFormatCurrency();
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const [csvImporting, setCsvImporting] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newItemData, setNewItemData] = useState({
     categoryId: null as number | null,
@@ -26,6 +29,9 @@ export default function MenuItemsPanel() {
   const [menuSearch, setMenuSearch] = useState("");
   const [editingCategory, setEditingCategory] = useState<{ id: number; name: string } | null>(null);
   const [editingMenuItem, setEditingMenuItem] = useState<{ id: number; name: string; description: string; price: number; categoryId: number; imageUrl: string | null; foodType: string; badge: string | null } | null>(null);
+  const [managingModifiers, setManagingModifiers] = useState<any | null>(null);
+  const [modifierVariants, setModifierVariants] = useState<any[]>([]);
+  const [modifierOptions, setModifierOptions] = useState<Record<number, any[]>>({});
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'category' | 'item'; id: number; name: string } | null>(null);
   const [confirmDisableAll, setConfirmDisableAll] = useState<{ categoryId: number; categoryName: string; itemCount: number } | null>(null);
 
@@ -268,6 +274,68 @@ export default function MenuItemsPanel() {
     },
   });
 
+  const handleCsvImport = async (file: File) => {
+    setCsvImporting(true);
+    try {
+      const text = await file.text();
+      const { rows, errors } = parseMenuCsv(text);
+      if (!rows.length) {
+        toast.error(errors[0] || "No valid rows in CSV");
+        return;
+      }
+
+      const catNameToId = new Map<string, number>();
+      for (const c of categories || []) {
+        catNameToId.set(String(c.name).toLowerCase(), c.id);
+      }
+
+      let maxCatOrder = categories?.reduce((max, c) => Math.max(max, c.displayOrder ?? 0), 0) ?? 0;
+      for (const row of rows) {
+        const key = row.category.toLowerCase();
+        if (!catNameToId.has(key)) {
+          maxCatOrder += 1;
+          const { data, error } = await supabase
+            .from("categories")
+            .insert({ name: row.category, displayOrder: maxCatOrder })
+            .select("id")
+            .single();
+          if (error) throw error;
+          catNameToId.set(key, data.id);
+        }
+      }
+
+      const inserts = rows.map((row) => ({
+        categoryId: catNameToId.get(row.category.toLowerCase())!,
+        name: row.name,
+        description: row.description || null,
+        price: row.price,
+        foodType: row.foodType,
+        isAvailable: true,
+        displayOrder: 0,
+      }));
+
+      const { error: insertError } = await supabase.from("menuItems").insert(inserts);
+      if (insertError) throw insertError;
+
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["menuItems"] });
+      fetch("/api/public/invalidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "menuItems" }),
+      });
+
+      const msg = `Imported ${rows.length} items`;
+      if (errors.length) toast.warning(`${msg} (${errors.length} rows skipped)`);
+      else toast.success(msg);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "CSV import failed");
+    } finally {
+      setCsvImporting(false);
+      if (csvInputRef.current) csvInputRef.current.value = "";
+    }
+  };
+
   return (
     <>
       <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
@@ -368,8 +436,47 @@ export default function MenuItemsPanel() {
       </Card>
 
       <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
-        <div className="flex items-center justify-between mb-4 md:mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
           <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white">Menu Items</h2>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleCsvImport(file);
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              disabled={csvImporting}
+              onClick={() => {
+                const blob = new Blob([MENU_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "menu-template.csv";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download className="w-4 h-4" />
+              CSV template
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              disabled={csvImporting}
+              onClick={() => csvInputRef.current?.click()}
+            >
+              {csvImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              Import CSV
+            </Button>
           <Dialog>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 text-white font-medium rounded-lg transition-all duration-200">
@@ -457,6 +564,7 @@ export default function MenuItemsPanel() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none">
@@ -577,6 +685,37 @@ export default function MenuItemsPanel() {
                         >
                           <Pencil className="w-3 h-3 mr-1" />
                           Edit
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setManagingModifiers(item);
+                            // Load variants
+                            supabase.from('menuItemVariants').select('*').eq('menuItemId', item.id).order('displayOrder').then(({ data }) => {
+                              if (data) {
+                                setModifierVariants(data);
+                                const vIds = data.map(d => d.id);
+                                if (vIds.length > 0) {
+                                  supabase.from('menuItemVariantOptions').select('*').in('variantId', vIds).order('displayOrder').then(({ data: optData }) => {
+                                    if (optData) {
+                                      const grouped: Record<number, any[]> = {};
+                                      optData.forEach(o => {
+                                        if (!grouped[o.variantId]) grouped[o.variantId] = [];
+                                        grouped[o.variantId].push(o);
+                                      });
+                                      setModifierOptions(grouped);
+                                    }
+                                  });
+                                } else {
+                                  setModifierOptions({});
+                                }
+                              }
+                            });
+                          }}
+                          size="sm"
+                          variant="ghost"
+                          className="flex-1 h-7 text-xs text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                        >
+                          Options
                         </Button>
                         <Button
                           onClick={() => toggleAvailabilityMutation.mutate({ id: item.id, isAvailable: !item.isAvailable })}
@@ -795,6 +934,115 @@ export default function MenuItemsPanel() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      {/* Manage Modifiers Dialog */}
+      <Dialog open={managingModifiers !== null} onOpenChange={(open) => !open && setManagingModifiers(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Manage Options for {managingModifiers?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            <Button
+              onClick={async () => {
+                const name = prompt("Variant Group Name (e.g. Size, Milk Type):");
+                if (!name) return;
+                const { data, error } = await supabase.from('menuItemVariants').insert({
+                  menuItemId: managingModifiers.id,
+                  name,
+                  required: false,
+                  multiSelect: false,
+                  displayOrder: modifierVariants.length
+                }).select().single();
+                if (error) {
+                  toast.error(error.message);
+                } else if (data) {
+                  setModifierVariants([...modifierVariants, data]);
+                }
+              }}
+              className="w-full gap-2" variant="outline"
+            >
+              <Plus className="w-4 h-4" /> Add Option Group
+            </Button>
+            
+            {modifierVariants.map(variant => (
+              <Card key={variant.id} className="p-4 border border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h3 className="font-bold">{variant.name}</h3>
+                    <div className="flex gap-4 text-sm mt-1">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={variant.required} onChange={async (e) => {
+                          const val = e.target.checked;
+                          await supabase.from('menuItemVariants').update({ required: val }).eq('id', variant.id);
+                          setModifierVariants(modifierVariants.map(v => v.id === variant.id ? { ...v, required: val } : v));
+                        }} /> Required
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={variant.multiSelect} onChange={async (e) => {
+                          const val = e.target.checked;
+                          await supabase.from('menuItemVariants').update({ multiSelect: val }).eq('id', variant.id);
+                          setModifierVariants(modifierVariants.map(v => v.id === variant.id ? { ...v, multiSelect: val } : v));
+                        }} /> Multi-select
+                      </label>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" className="text-red-500" onClick={async () => {
+                    if (confirm(`Delete ${variant.name}?`)) {
+                      await supabase.from('menuItemVariants').delete().eq('id', variant.id);
+                      setModifierVariants(modifierVariants.filter(v => v.id !== variant.id));
+                    }
+                  }}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+                
+                <div className="space-y-2 pl-4 border-l-2 border-slate-100">
+                  {(modifierOptions[variant.id] || []).map(opt => (
+                    <div key={opt.id} className="flex gap-2 items-center">
+                      <Input value={opt.name} onChange={async (e) => {
+                        const val = e.target.value;
+                        const newOpts = (modifierOptions[variant.id] || []).map(o => o.id === opt.id ? { ...o, name: val } : o);
+                        setModifierOptions({ ...modifierOptions, [variant.id]: newOpts });
+                        await supabase.from('menuItemVariantOptions').update({ name: val }).eq('id', opt.id);
+                      }} className="flex-1 h-8" />
+                      <Input type="number" step="0.01" value={opt.priceAdjustment} onChange={async (e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        const newOpts = (modifierOptions[variant.id] || []).map(o => o.id === opt.id ? { ...o, priceAdjustment: val } : o);
+                        setModifierOptions({ ...modifierOptions, [variant.id]: newOpts });
+                        await supabase.from('menuItemVariantOptions').update({ priceAdjustment: val }).eq('id', opt.id);
+                      }} className="w-24 h-8" placeholder="+Price" />
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={async () => {
+                        await supabase.from('menuItemVariantOptions').delete().eq('id', opt.id);
+                        setModifierOptions({
+                          ...modifierOptions,
+                          [variant.id]: (modifierOptions[variant.id] || []).filter(o => o.id !== opt.id)
+                        });
+                      }}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="ghost" size="sm" className="text-xs" onClick={async () => {
+                    const { data } = await supabase.from('menuItemVariantOptions').insert({
+                      variantId: variant.id,
+                      name: "New Option",
+                      priceAdjustment: 0,
+                      displayOrder: (modifierOptions[variant.id] || []).length
+                    }).select().single();
+                    if (data) {
+                      setModifierOptions({
+                        ...modifierOptions,
+                        [variant.id]: [...(modifierOptions[variant.id] || []), data]
+                      });
+                    }
+                  }}>
+                    <Plus className="w-3 h-3 mr-1" /> Add Choice
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </>

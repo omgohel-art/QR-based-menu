@@ -60,8 +60,8 @@ export default function Footer({ variant = "default" }: FooterProps) {
                 MAMA Cafe
               </div>
             ) : (
-              <Link href="/" className={cn("flex items-center gap-2.5 font-bold text-xl", "text-foreground")}>
-                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", "bg-blue-500")}>
+              <Link href="/welcome" className={cn("flex items-center gap-2.5 font-bold text-xl", "text-foreground")}>
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", "bg-amber-700")}>
                   <QrCode className="w-5 h-5 text-white" />
                 </div>
                 MAMA Cafe
@@ -71,7 +71,7 @@ export default function Footer({ variant = "default" }: FooterProps) {
               "text-sm mt-4 max-w-sm",
               isMenu ? "text-menu-muted" : "text-muted-foreground"
             )}>
-              The modern QR menu and restaurant management platform helping cafes and restaurants digitize their menus, streamline ordering, and improve customer experience.
+              The single-café QR menu and kitchen system — installed and supported for your outlet.
             </p>
             <div className={cn(
               "space-y-2.5 text-sm mt-8",

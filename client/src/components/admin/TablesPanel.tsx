@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { TabsContent } from "@/components/ui/tabs";
-import { Plus, Trash2, Pencil, QrCode, Copy, Check } from "lucide-react";
+import { Plus, Trash2, Pencil, QrCode, Copy, Check, FileDown, Loader2 } from "lucide-react";
 import QRCode from 'qrcode';
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
@@ -20,6 +20,7 @@ export default function TablesPanel() {
   const [qrTable, setQrTable] = useState<{ tableCode: string; label: string } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [bulkQrBusy, setBulkQrBusy] = useState(false);
 
   const { data: tablesData, isLoading: isTablesLoading } = useQuery({
     queryKey: ['tables'],
@@ -140,12 +141,80 @@ export default function TablesPanel() {
     }
   };
 
+  const handleBulkQrPdf = async () => {
+    if (!tablesData?.length) {
+      toast.error("Create tables first");
+      return;
+    }
+    setBulkQrBusy(true);
+    try {
+      const cards: { label: string; dataUrl: string }[] = [];
+      for (const table of tablesData) {
+        const url = `${window.location.origin}/table/${table.tableCode}`;
+        const dataUrl = await QRCode.toDataURL(url, {
+          width: 280,
+          margin: 2,
+          color: { dark: "#1e293b", light: "#ffffff" },
+        });
+        cards.push({ label: table.label, dataUrl });
+      }
+
+      const w = window.open("", "_blank");
+      if (!w) {
+        toast.error("Allow pop-ups to print the QR sheet");
+        return;
+      }
+      const html = `<!DOCTYPE html><html><head><title>Table QR Codes</title>
+        <style>
+          @page { margin: 12mm; }
+          body { font-family: system-ui, sans-serif; margin: 0; color: #0f172a; }
+          h1 { font-size: 18px; margin: 0 0 16px; }
+          .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+          .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; text-align: center; break-inside: avoid; }
+          .card img { width: 140px; height: 140px; }
+          .label { font-weight: 700; font-size: 14px; margin-top: 8px; }
+          .hint { font-size: 10px; color: #64748b; margin-top: 4px; word-break: break-all; }
+          @media print { button { display: none; } }
+        </style></head><body>
+        <button onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;cursor:pointer">Print / Save as PDF</button>
+        <h1>Table QR codes — scan to order</h1>
+        <div class="grid">
+          ${cards
+            .map(
+              (c) =>
+                `<div class="card"><img src="${c.dataUrl}" alt="${c.label}" /><div class="label">${c.label}</div><div class="hint">Scan to open menu</div></div>`
+            )
+            .join("")}
+        </div>
+        <script>setTimeout(() => window.print(), 400);</script>
+        </body></html>`;
+      w.document.write(html);
+      w.document.close();
+      toast.success("QR print sheet opened — use Print → Save as PDF");
+    } catch {
+      toast.error("Failed to generate QR sheet");
+    } finally {
+      setBulkQrBusy(false);
+    }
+  };
+
   return (
     <>
       <TabsContent value="tables" className="space-y-6">
         <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
-          <div className="flex items-center justify-between mb-4 md:mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6">
             <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white">Tables</h2>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={bulkQrBusy || !tablesData?.length}
+                onClick={handleBulkQrPdf}
+              >
+                {bulkQrBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                Download all QR PDF
+              </Button>
             <Dialog>
               <DialogTrigger asChild>
                 <Button className="gap-2 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 text-white font-medium rounded-lg transition-all duration-200">
@@ -172,6 +241,7 @@ export default function TablesPanel() {
                 </div>
               </DialogContent>
             </Dialog>
+            </div>
           </div>
 
           {isTablesLoading ? (

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,9 +11,10 @@ import AdminAvatar from "@/components/admin/AdminAvatar";
 import OnlineIndicator from "@/components/OnlineIndicator";
 import ChangePassword from "@/components/admin/ChangePassword";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, LogOut, Eye, EyeOff, Shield, Mail } from "lucide-react";
+import { Settings, LogOut, Eye, EyeOff, Shield, Mail, FileText, Sparkles, Download, Languages, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import Footer from "@/components/marketing/Footer";
+import OnboardingWizard, { isOnboardingDismissed } from "@/components/admin/OnboardingWizard";
 
 // Lazy-loaded heavy components (only loaded when their tab/page is active)
 const BusinessSettings = lazy(() => import("@/components/BusinessSettings"));
@@ -28,6 +30,8 @@ const ThemeSettings = lazy(() => import("@/components/admin/ThemeSettings"));
 const NotificationEmail = lazy(() => import("@/components/admin/NotificationEmail"));
 const TwoFactorAuth = lazy(() => import("@/components/admin/TwoFactorAuth"));
 const ActiveSessions = lazy(() => import("@/components/admin/ActiveSessions"));
+const AdminLoyaltyPanel = lazy(() => import("@/components/admin/AdminLoyaltyPanel"));
+const AdminSpinPanel = lazy(() => import("@/components/admin/AdminSpinPanel"));
 const BusinessPreferences = lazy(() => import("@/components/admin/BusinessPreferences"));
 const TakeOrder = lazy(() => import("@/components/admin/TakeOrder"));
 const StaffManagement = lazy(() => import("@/components/admin/StaffManagement"));
@@ -36,6 +40,9 @@ const StaffProfile = lazy(() => import("@/components/admin/StaffProfile"));
 const LeaveRequestAdmin = lazy(() => import("@/components/admin/LeaveRequestAdmin"));
 const InventoryPanel = lazy(() => import("@/components/admin/InventoryPanel"));
 const SettledBillsHistory = lazy(() => import("@/components/admin/SettledBillsHistory"));
+const EODReportModal = lazy(() => import("@/components/admin/EODReportModal"));
+const Help = lazy(() => import("@/components/admin/Help"));
+const ReservationsPanel = lazy(() => import("@/components/admin/ReservationsPanel"));
 
 const TabFallback = () => (
   <div className="space-y-4">
@@ -77,6 +84,42 @@ export default function AdminPanel() {
   const [settingsSubTab, setSettingsSubTab] = useState<"general" | "business">("general");
   const [avatarPage, setAvatarPage] = useState<string | null>(null);
   const [hasViewedLeaveRequests, setHasViewedLeaveRequests] = useState(false);
+  const [showEODModal, setShowEODModal] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const { locale, toggleLocale, t: st } = useStaffLanguage();
+
+  useEffect(() => {
+    if (!isAdmin || isOnboardingDismissed()) return;
+    const timer = setTimeout(() => setShowOnboarding(true), 600);
+    return () => clearTimeout(timer);
+  }, [isAdmin]);
+
+  const downloadExport = useCallback(async (path: string, filename: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        toast.error("Please log in again");
+        return;
+      }
+      const res = await fetch(path, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${filename}`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    }
+  }, []);
 
   const { data: pendingLeaveCount } = useQuery({
     queryKey: ["admin", "pendingLeaveCount"],
@@ -322,10 +365,37 @@ export default function AdminPanel() {
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl md:text-3xl font-bold text-slate-900 dark:text-white">{isKitchenMode ? "Kitchen Panel" : "Admin Panel"}</h1>
-              <p className="text-xs md:text-sm text-slate-600 dark:text-slate-400 mt-1">{isKitchenMode ? "View incoming orders" : "Manage cafe operations"}</p>
+              <h1 className="text-xl md:text-3xl font-bold text-slate-900 dark:text-white">{isKitchenMode ? st("kitchenPanel") : st("adminPanel")}</h1>
+              <p className="text-xs md:text-sm text-slate-600 dark:text-slate-400 mt-1">{isKitchenMode ? st("viewIncomingOrders") : st("manageCafeOperations")}</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 md:gap-3">
+              <button
+                type="button"
+                onClick={toggleLocale}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5"
+                title={st("language")}
+              >
+                <Languages className="w-4 h-4" />
+                {st("switchTo")}
+              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowOnboarding(true)}
+                  className="hidden sm:flex px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-semibold items-center gap-1.5 hover:bg-amber-100"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Setup
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => setShowEODModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                >
+                  <FileText className="w-4 h-4" /> EOD Z-Report
+                </button>
+              )}
               {isAdmin && (
                 <button
                   onClick={() => handleAvatarNavigation("leave-requests")}
@@ -353,7 +423,7 @@ export default function AdminPanel() {
               onClick={() => setAvatarPage(null)}
               className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 mb-4 flex items-center gap-1"
             >
-              ← Back to Dashboard
+              {st("backToDashboard")}
             </button>
             <Suspense fallback={<TabFallback />}>
               {avatarPage === "profile" && (isAdmin ? <MyProfile onNavigate={handleAvatarNavigation} /> : <StaffProfile onNavigate={handleAvatarNavigation} />)}
@@ -369,19 +439,21 @@ export default function AdminPanel() {
               {avatarPage === "staff-activity" && <StaffActivity onNavigate={handleAvatarNavigation} />}
               {avatarPage === "staff-profile" && <StaffProfile onNavigate={handleAvatarNavigation} />}
               {avatarPage === "leave-requests" && <LeaveRequestAdmin onNavigate={handleAvatarNavigation} />}
+              {avatarPage === "help" && <Help />}
             </Suspense>
           </>
         ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <div className="sticky top-[96px] z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 shadow-sm">
             <TabsList className="flex overflow-x-auto scrollbar-hide w-full max-w-7xl mx-auto !h-auto !p-0 !bg-transparent !justify-start">
-              {!isKitchenMode && isAdmin && <TabsTrigger value="orders" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Orders</TabsTrigger>}
-              <TabsTrigger value="orderqueue" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Order Queue</TabsTrigger>
-              {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Tables</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Menu</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Analytics</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="inventory" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Inventory</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="settings" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">Settings</TabsTrigger>}
+{!isKitchenMode && isAdmin && <TabsTrigger value="orders" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("orders")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("tables")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("menu")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("analytics")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="inventory" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("inventory")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="reservations" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("reservations")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="rewards" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("rewards")}</TabsTrigger>}
+              {!isKitchenMode && isAdmin && <TabsTrigger value="settings" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("settingsTab")}</TabsTrigger>}
             </TabsList>
           </div>
 
@@ -413,9 +485,22 @@ export default function AdminPanel() {
               <AnalyticsDashboard />
             </Suspense>
           </TabsContent>
-          <TabsContent value="inventory" className="space-y-6">
+           <TabsContent value="inventory" className="space-y-6">
             <Suspense fallback={<TabFallback />}>
               <InventoryPanel />
+            </Suspense>
+          </TabsContent>
+          <TabsContent value="reservations" className="space-y-6">
+            <Suspense fallback={<TabFallback />}>
+              <ReservationsPanel />
+            </Suspense>
+          </TabsContent>
+          <TabsContent value="rewards" className="space-y-6">
+            <Suspense fallback={<TabFallback />}>
+              <AdminLoyaltyPanel />
+            </Suspense>
+            <Suspense fallback={<TabFallback />}>
+              <AdminSpinPanel />
             </Suspense>
           </TabsContent>
           <TabsContent value="settings" className="space-y-6">
@@ -622,6 +707,36 @@ export default function AdminPanel() {
             <Suspense fallback={<TabFallback />}>
               <SettledBillsHistory />
             </Suspense>
+
+            <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-2">
+                <Download className="w-5 h-5" />
+                {st("exportData")}
+              </h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                Download your menu and settled bills as CSV (you own this data).
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => downloadExport("/api/admin/export/menu.csv", "menu-export.csv")}
+                >
+                  <Download className="w-4 h-4" />
+                  Menu CSV
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => downloadExport("/api/admin/export/orders.csv?days=30", "orders-30d.csv")}
+                >
+                  <Download className="w-4 h-4" />
+                  Orders (30 days)
+                </Button>
+              </div>
+            </Card>
             </>
             )}
 
@@ -645,6 +760,21 @@ export default function AdminPanel() {
             onClose={() => setPrintData(null)}
           />
         </Suspense>
+      )}
+
+      <Suspense fallback={null}>
+        <EODReportModal open={showEODModal} onClose={() => setShowEODModal(false)} />
+      </Suspense>
+
+      {isAdmin && (
+        <OnboardingWizard
+          open={showOnboarding}
+          onClose={() => setShowOnboarding(false)}
+          onNavigateTab={(tab) => {
+            setActiveTab(tab);
+            setAvatarPage(null);
+          }}
+        />
       )}
 
       <Footer variant="admin" />

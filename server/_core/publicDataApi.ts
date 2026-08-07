@@ -5,7 +5,7 @@ import {
   listMenuItems,
 } from "../db";
 import { getDb } from "../db";
-import { businessSettings } from "../../drizzle/schema";
+import { businessSettings, serviceRequests } from "../../drizzle/schema";
 import { getUserIdFromToken } from "./authRoutes";
 import { createClient } from "@supabase/supabase-js";
 
@@ -53,6 +53,21 @@ router.get("/api/public/categories", async (_req: Request, res: Response) => {
     res.json(data);
   } catch (err) {
     console.error("[Cache] Failed to fetch categories:", err);
+    try {
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data, error: sbErr } = await sb.from("categories").select("*").order("displayOrder").order("name");
+        if (sbErr) {
+          console.error("[Cache] Supabase fallback error for categories:", sbErr);
+        } else {
+          menuDataCache.set("categories", data || []);
+          setCacheHeaders(res);
+          return res.json(data || []);
+        }
+      }
+    } catch (fbErr) {
+      console.error("[Cache] Supabase fallback exception for categories:", fbErr);
+    }
     res.status(500).json({ error: "Failed to fetch categories" });
   }
 });
@@ -154,6 +169,115 @@ router.post("/api/public/invalidate", async (req: Request, res: Response) => {
     settingsCache.invalidateAll();
   }
   res.json({ invalidated: true });
+});
+
+router.post("/api/public/call-waiter", async (req: Request, res: Response) => {
+  const { tableCode, requestType, requestLabel } = req.body as {
+    tableCode?: unknown;
+    requestType?: unknown;
+    requestLabel?: unknown;
+  };
+
+  if (!tableCode || typeof tableCode !== "string" || !tableCode.trim()) {
+    return res.status(400).json({ error: "Table code is required" });
+  }
+  if (!requestType || typeof requestType !== "string" || !requestType.trim()) {
+    return res.status(400).json({ error: "Request type is required" });
+  }
+  if (!requestLabel || typeof requestLabel !== "string" || !requestLabel.trim()) {
+    return res.status(400).json({ error: "Request label is required" });
+  }
+
+  const trimmedTableCode = tableCode.trim().slice(0, 32);
+  const trimmedRequestType = requestType.trim().slice(0, 32);
+  const trimmedRequestLabel = requestLabel.trim().slice(0, 64);
+  const allowedTypes = ["waiter", "water", "bill", "clean"];
+
+  if (!allowedTypes.includes(trimmedRequestType)) {
+    return res.status(400).json({ error: "Invalid request type" });
+  }
+
+  try {
+    const db = await getDb();
+    if (db) {
+      try {
+        await db.insert(serviceRequests).values({
+          tableCode: trimmedTableCode,
+          requestType: trimmedRequestType,
+          requestLabel: trimmedRequestLabel,
+        });
+      } catch (dbError) {
+        console.error("[CallWaiter] DB insert failed, trying Supabase fallback:", dbError);
+        const sb = getSupabaseFallback();
+        if (!sb) {
+          throw dbError;
+        }
+        const { error } = await sb.from("serviceRequests").insert({
+          tableCode: trimmedTableCode,
+          requestType: trimmedRequestType,
+          requestLabel: trimmedRequestLabel,
+        });
+        if (error) {
+          console.error("[CallWaiter] Supabase fallback insert error:", error);
+          throw error;
+        }
+      }
+    } else {
+      const sb = getSupabaseFallback();
+      if (!sb) {
+        return res.status(503).json({ error: "Database unavailable" });
+      }
+      const { error } = await sb.from("serviceRequests").insert({
+        tableCode: trimmedTableCode,
+        requestType: trimmedRequestType,
+        requestLabel: trimmedRequestLabel,
+      });
+      if (error) {
+        console.error("[CallWaiter] Supabase insert error:", error);
+        return res.status(500).json({ error: "Failed to save service request" });
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[CallWaiter] request failed:", err);
+    return res.status(500).json({ error: "Failed to create service request" });
+  }
+});
+
+// Loyalty tiers from server settings (mirrors loyaltyRoutes DEFAULT_TIERS)
+const LOYALTY_TIERS = [
+  { minSpend: 500, points: 5 },
+  { minSpend: 1000, points: 15 },
+  { minSpend: 1500, points: 20 },
+  { minSpend: 2000, points: 30 },
+  { minSpend: 2500, points: 35 },
+  { minSpend: 3000, points: 45 },
+  { minSpend: 3500, points: 50 },
+  { minSpend: 4000, points: 60 },
+];
+
+router.get("/api/public/loyalty-tiers", async (_req: Request, res: Response) => {
+  try {
+    const cached = settingsCache.get("businessSettings");
+    const loyaltyEnabled = cached?.loyaltyEnabled ?? true;
+    const loyaltyRewardPercent = cached?.loyaltyRewardPercent ?? 5;
+    const loyaltyPointsThreshold = cached?.loyaltyPointsThreshold ?? 100;
+
+    res.json({
+      loyaltyEnabled,
+      loyaltyRewardPercent,
+      loyaltyPointsThreshold,
+      tiers: LOYALTY_TIERS,
+    });
+  } catch {
+    res.json({
+      loyaltyEnabled: true,
+      loyaltyRewardPercent: 5,
+      loyaltyPointsThreshold: 100,
+      tiers: LOYALTY_TIERS,
+    });
+  }
 });
 
 export default router;

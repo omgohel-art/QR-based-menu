@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -32,6 +33,7 @@ import {
   ClipboardList,
   Users,
   Activity,
+  HelpCircle,
 } from "lucide-react";
 
 interface MenuItem {
@@ -48,6 +50,7 @@ interface AdminAvatarProps {
 
 export default function AdminAvatar({ onNavigate }: AdminAvatarProps) {
   const { user, profile, logout } = useAuth();
+  const { t, locale } = useStaffLanguage();
   const [open, setOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const isAdmin = profile?.role === "admin";
@@ -67,15 +70,16 @@ export default function AdminAvatar({ onNavigate }: AdminAvatarProps) {
   const profileImage = profile?.profile_image_url || settings?.logoUrl || null;
 
   const allMenuItems: MenuItem[] = [
-    { label: "My Profile", icon: <User className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("profile"); } },
-    { label: "Business Settings", icon: <Store className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("settings"); }, roles: ["admin"] },
-    { label: "Email Settings", icon: <Mail className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("email"); }, roles: ["admin"] },
-    { label: "Change Password", icon: <Lock className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("password"); } },
-    { label: "Theme", icon: <Palette className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("theme"); } },
-    { label: "Take Order", icon: <ClipboardList className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("take-order"); } },
-    { label: "Staff Management", icon: <Users className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("staff-management"); }, roles: ["admin"] },
-    { label: "Staff Activity", icon: <Activity className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("staff-activity"); }, roles: ["admin"] },
-    { label: "Logout", icon: <LogOut className="w-4 h-4" />, onClick: () => { setOpen(false); setLogoutOpen(true); }, variant: "destructive" },
+    { label: t("myProfile"), icon: <User className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("profile"); } },
+    { label: t("businessSettings"), icon: <Store className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("settings"); }, roles: ["admin"] },
+    { label: t("emailSettings"), icon: <Mail className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("email"); }, roles: ["admin"] },
+    { label: t("changePassword"), icon: <Lock className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("password"); } },
+    { label: t("theme"), icon: <Palette className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("theme"); } },
+    { label: t("ownerHandbook"), icon: <HelpCircle className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("help"); }, roles: ["admin"] },
+    { label: t("takeOrder"), icon: <ClipboardList className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("take-order"); } },
+    { label: t("staffManagement"), icon: <Users className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("staff-management"); }, roles: ["admin"] },
+    { label: t("staffActivity"), icon: <Activity className="w-4 h-4" />, onClick: () => { setOpen(false); onNavigate("staff-activity"); }, roles: ["admin"] },
+    { label: t("logout"), icon: <LogOut className="w-4 h-4" />, onClick: () => { setOpen(false); setLogoutOpen(true); }, variant: "destructive" },
   ];
 
   const menuItems = allMenuItems.filter(
@@ -100,6 +104,7 @@ export default function AdminAvatar({ onNavigate }: AdminAvatarProps) {
         </DropdownMenuTrigger>
 
         <DropdownMenuContent
+          key={locale}
           align="end"
           sideOffset={8}
           className="w-64 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-slate-200 dark:border-slate-700 shadow-xl shadow-slate-900/10 rounded-xl p-1.5"
@@ -138,15 +143,15 @@ export default function AdminAvatar({ onNavigate }: AdminAvatarProps) {
       <AlertDialog open={logoutOpen} onOpenChange={setLogoutOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Sign Out?</AlertDialogTitle>
+            <AlertDialogTitle>{t("signOutTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to sign out of your account?
+              {t("signOutDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { logout(); setLogoutOpen(false); }} className="bg-red-600 hover:bg-red-700">
-              Logout
+              {t("logout")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

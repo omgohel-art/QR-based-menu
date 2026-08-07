@@ -16,6 +16,11 @@ import chatRoutes from "./chatRoutes";
 import adminDataRoutes from "./adminDataRoutes";
 import inventoryRoutes from "./inventoryRoutes";
 import analyticsRoutes from "./analyticsRoutes";
+import loyaltyRoutes from "./loyaltyRoutes";
+import spinRoutes from "./spinRoutes";
+import exportRoutes from "./exportRoutes";
+import reservationRoutes from "./reservationRoutes";
+import { startAutoSettleService, stopAutoSettleService } from "./autoSettle";
 import { getDb } from "../db";
 
 // Guard: prevent accidental use of Razorpay test keys in production
@@ -66,7 +71,7 @@ function corsMiddleware(_req: Request, res: Response, next: NextFunction) {
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Print-Agent-Token");
     res.setHeader("Access-Control-Allow-Credentials", "true");
   }
   if (_req.method === "OPTIONS") {
@@ -79,6 +84,8 @@ function csrfProtection(req: Request, res: Response, next: NextFunction) {
   const safeMethods = ["GET", "HEAD", "OPTIONS"];
   if (safeMethods.includes(req.method)) return next();
   if (req.method === "POST" && (req.path === "/chat/stream" || req.path === "/api/chat/stream")) return next();
+  // Local thermal print agent (no browser Origin header)
+  if (req.path.startsWith("/print-agent") || req.path.startsWith("/api/print-agent")) return next();
   const origin = req.headers["origin"] || req.headers["referer"] || "";
   if (!origin) {
     return res.status(403).json({ error: "CSRF validation failed" });
@@ -145,6 +152,10 @@ async function startServer() {
   app.use(adminDataRoutes);
   app.use(inventoryRoutes);
   app.use(analyticsRoutes);
+  app.use(loyaltyRoutes);
+  app.use(spinRoutes);
+  app.use(exportRoutes);
+  app.use(reservationRoutes);
 
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -168,10 +179,12 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    startAutoSettleService();
   });
 
   const shutdown = async () => {
     console.log("Shutting down gracefully...");
+    stopAutoSettleService();
     server.close();
     const { resetDb } = await import("../db");
     await resetDb();

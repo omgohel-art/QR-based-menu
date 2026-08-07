@@ -529,7 +529,7 @@ router.get("/api/auth/staff", async (req, res) => {
     // Fetch all profiles
     const profilesRes = await fire(supabaseBreaker, async () => {
       const r = await fetch(
-        `${SUPABASE_URL}/rest/v1/user_profiles?select=auth_user_id,name,role,phone,attendance_clock_in,attendance_clock_out,attendance_date,last_login_at,department,shift,employment_status`,
+        `${SUPABASE_URL}/rest/v1/user_profiles?select=auth_user_id,name,role,phone,pin,attendance_clock_in,attendance_clock_out,attendance_date,last_login_at,department,shift,employment_status`,
         { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
       );
       if (!r.ok) throw new Error(`Profiles fetch failed: ${r.status}`);
@@ -548,6 +548,7 @@ router.get("/api/auth/staff", async (req, res) => {
         name: p?.name || "",
         role: p?.role || "staff",
         phone: p?.phone || "",
+        pin: p?.pin || "",
         lastSignIn: u.last_sign_in_at || null,
         createdAt: u.created_at,
         department: p?.department || null,
@@ -986,6 +987,27 @@ router.post("/api/auth/create-staff", async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
 
+    // Generate a unique 4-digit PIN for this staff member
+    let pin = "";
+    let pinAttempts = 0;
+    const usedPins = new Set<string>();
+    // Fetch all existing PINs
+    const existingPinsRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?select=pin&pin=not.is.null`, {
+        headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY },
+      });
+      if (!r.ok) throw new Error("Failed to fetch pins");
+      return r;
+    }).catch(() => null);
+    if (existingPinsRes) {
+      const existingPins = (await existingPinsRes.json()) as { pin: string }[];
+      for (const p of existingPins) usedPins.add(p.pin);
+    }
+    do {
+      pin = String(1000 + Math.floor(Math.random() * 9000));
+      pinAttempts++;
+    } while (usedPins.has(pin) && pinAttempts < 100);
+
     // Create auth user via Supabase Admin API
     const createRes = await fire(supabaseBreaker, async () => {
       const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
@@ -1035,6 +1057,7 @@ router.post("/api/auth/create-staff", async (req, res) => {
           role: role || "staff",
           department: department || null,
           shift: shift || null,
+          pin,
           employment_status: "active",
           must_change_password: false,
           notif_order: true,
@@ -1356,6 +1379,63 @@ router.put("/api/admin/leave-requests/:id", async (req, res) => {
   } catch (err: unknown) {
     console.error("admin leave-requests update error:", err);
     return res.status(500).json({ error: "Failed to update leave request" });
+  }
+});
+
+// ── PIN Login: Look up staff by 4-digit PIN and create a session ──
+router.get("/api/auth/pin-login/:pin", async (req, res) => {
+  try {
+    if (!SUPABASE_SERVICE_KEY) return res.status(500).json({ error: "Not configured" });
+
+    const { pin } = req.params;
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ error: "Invalid PIN format" });
+    }
+
+    // Find the user_profiles entry with this PIN
+    const pinRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_profiles?pin=eq.${pin}&employment_status=eq.active&select=auth_user_id,role,name`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error("Failed to find staff");
+      return r;
+    }).catch(() => null);
+    if (!pinRes) return res.status(503).json({ error: "Service unavailable" });
+
+    const profiles = await pinRes.json();
+    if (!profiles || profiles.length === 0) {
+      return res.status(404).json({ error: "Invalid 4-digit PIN" });
+    }
+
+    const profile = profiles[0];
+
+    // Get the auth user's email
+    const authRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/auth/v1/admin/users/${profile.auth_user_id}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error("Failed to get user");
+      return r;
+    }).catch(() => null);
+    if (!authRes) return res.status(503).json({ error: "Service unavailable" });
+
+    const authUser = await authRes.json();
+    if (!authUser || !authUser.email) {
+      return res.status(404).json({ error: "Auth user not found" });
+    }
+
+    return res.json({
+      valid: true,
+      email: authUser.email,
+      name: profile.name,
+      role: profile.role,
+      authUserId: profile.auth_user_id,
+    });
+  } catch (err: unknown) {
+    console.error("pin-login error:", err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: "PIN login failed" });
   }
 });
 

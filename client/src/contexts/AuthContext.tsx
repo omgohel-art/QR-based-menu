@@ -21,6 +21,7 @@ interface UserProfile {
   shift_timing: string | null;
   reporting_manager: string | null;
   employment_status: string | null;
+  pin: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;

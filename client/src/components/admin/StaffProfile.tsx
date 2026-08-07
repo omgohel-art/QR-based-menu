@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { Card } from "@/components/ui/card";
@@ -9,7 +10,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   ArrowLeft, Camera, Loader2, Trash2, Calendar,
   Key, Bell, Monitor, Globe, Save, X, Clock, LogIn, LogOut, Volume2, Play,
-  Palmtree, Send,
+  Palmtree, Send, Hash, Copy, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProfileSkeleton } from "@/components/Skeletons";
@@ -50,6 +51,7 @@ function formatDateTime(iso: string | null): string {
 
 export default function StaffProfile({ onNavigate }: StaffProfileProps) {
   const { user, profile, updateProfile, logout } = useAuth();
+  const { t } = useStaffLanguage();
   const { enabled: soundEnabled, volume: soundVolume, setEnabled: setSoundEnabled, setVolume: setSoundVolume } = useSoundSettings();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,6 +68,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
   const [leaveType, setLeaveType] = useState<"holiday" | "half-day">("holiday");
   const [leaveDate, setLeaveDate] = useState("");
   const [leaveReason, setLeaveReason] = useState("");
+  const [pinCopied, setPinCopied] = useState(false);
   const queryClient = useQueryClient();
   useEffect(() => {
     if (profile) {
@@ -335,8 +338,8 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Staff Profile</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">View and manage your staff profile details.</p>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{t("staffProfile")}</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{t("viewManageProfile")}</p>
         </div>
       </div>
 
@@ -348,7 +351,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
               className="absolute top-0 right-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 rounded-lg transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              Remove Photo
+              {t("removePhoto")}
             </button>
 
             <div className="relative group">
@@ -381,30 +384,30 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                     : "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400"
                 }`}
               >
-                {roleLabel}
+                {profile.role === "admin" ? t("admin") : t("staff")}
               </span>
             </div>
           </div>
         </Card>
 
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Personal Information</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("personalInfo")}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("fullName")}</label>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter full name" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Phone</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("phone")}</label>
               <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("email")}</label>
               <Input value={user?.email || ""} disabled className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700" />
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5">Email cannot be changed</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("role")}</label>
               <div className="relative">
                 <Input value={roleLabel} disabled className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700" />
                 <span
@@ -421,15 +424,68 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
           </div>
         </Card>
 
+        <Card className="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-900 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Hash className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              {t("loginPin")}
+            </h2>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
+              Read-only
+            </span>
+          </div>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+            {t("pinDescription")}
+          </p>
+          <div className="flex items-center justify-center gap-3 py-5 bg-white dark:bg-slate-900 rounded-xl border border-indigo-200 dark:border-indigo-900">
+            {profile.pin ? (
+              <>
+                {profile.pin.split("").map((digit, i) => (
+                  <div
+                    key={i}
+                    className="w-14 h-16 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-md"
+                  >
+                    {digit}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <p className="text-sm text-slate-400">{t("noPinAssigned")}</p>
+            )}
+          </div>
+          {profile.pin && (
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <code className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg font-mono text-sm font-bold tracking-widest text-slate-900 dark:text-white">
+                {profile.pin}
+              </code>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(profile.pin || "");
+                  setPinCopied(true);
+                  toast.success("PIN copied to clipboard");
+                  setTimeout(() => setPinCopied(false), 2000);
+                }}
+                className="gap-1.5"
+              >
+                {pinCopied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                {t("copyToClipboard")}
+              </Button>
+            </div>
+          )}
+        </Card>
+
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Attendance</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("attendance")}</h2>
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-green-100 dark:bg-green-950 flex items-center justify-center">
                 <LogIn className="w-5 h-5 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Clock In</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("clockIn")}</p>
                 <p className="text-sm font-bold text-slate-900 dark:text-white">
                   {attendance.clockIn ? new Date(attendance.clockIn).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "--"}
                 </p>
@@ -440,7 +496,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Clock Out</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("clockOut")}</p>
                 <p className="text-sm font-bold text-slate-900 dark:text-white">
                   {attendance.clockOut ? new Date(attendance.clockOut).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "--"}
                 </p>
@@ -463,7 +519,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   className="bg-green-600 hover:bg-green-700 text-white gap-2"
                 >
                   {clockLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                  Clock In
+                  {t("clockIn")}
                 </Button>
               ) : (
                 <Button
@@ -472,7 +528,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   className="bg-red-600 hover:bg-red-700 text-white gap-2"
                 >
                   {clockLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-                  Clock Out
+                  {t("clockOut")}
                 </Button>
               )}
               {isClockedIn && (
@@ -494,7 +550,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <Palmtree className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-            Apply for Leave
+            {t("applyForLeave")}
           </h2>
           <div className="space-y-4">
             <div className="flex gap-2">
@@ -506,7 +562,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                     : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                 }`}
               >
-                Holiday (Full Day)
+                {t("fullDayOff")}
               </button>
               <button
                 onClick={() => setLeaveType("half-day")}
@@ -516,11 +572,11 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                     : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                 }`}
               >
-                Half Day
+                {t("halfDay")}
               </button>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Date</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("selectDate")}</label>
               <Input
                 type="date"
                 value={leaveDate}
@@ -529,11 +585,11 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Reason (optional)</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("reason")} ({t("reason").toLowerCase().includes("कारण") ? "वैकल्पिक" : "optional"})</label>
               <Input
                 value={leaveReason}
                 onChange={(e) => setLeaveReason(e.target.value)}
-                placeholder="e.g. Personal work, family event..."
+                placeholder={t("reason")}
               />
             </div>
             <Button
@@ -546,7 +602,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
               ) : (
                 <Send className="w-4 h-4" />
               )}
-              Submit Request
+              {t("submit")}
             </Button>
           </div>
 
@@ -605,15 +661,15 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
         </Card>
 
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Account Security</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("accountSecurity")}</h2>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-950 flex items-center justify-center">
                 <Key className="w-5 h-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-white">Password</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Last changed: Never</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("password")}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t("lastChanged")}: {t("lastChangedNever")}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -624,22 +680,22 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 className="gap-2 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950"
               >
                 <Key className="w-4 h-4" />
-                Change Password
+                {t("changePasswordBtn")}
               </Button>
             </div>
           </div>
         </Card>
 
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Active Session</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("activeSession")}</h2>
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
                 <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Current Device</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">This Device</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("currentDevice")}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-white">{t("thisDevice")}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -647,7 +703,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 <Globe className="w-5 h-5 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Browser</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("browser")}</p>
                 <p className="text-sm font-bold text-slate-900 dark:text-white">{detectBrowser()}</p>
               </div>
             </div>
@@ -656,7 +712,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 <Monitor className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Operating System</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("operatingSystem")}</p>
                 <p className="text-sm font-bold text-slate-900 dark:text-white">{detectOS()}</p>
               </div>
             </div>
@@ -665,7 +721,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 <Calendar className="w-5 h-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Login Time</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t("loginTime")}</p>
                 <p className="text-sm font-bold text-slate-900 dark:text-white">{formatDateTime(user?.created_at || null)}</p>
               </div>
             </div>
@@ -676,14 +732,14 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                 className="gap-2 bg-red-600 hover:bg-red-700 text-white"
               >
                 <X className="w-4 h-4" />
-                Log Out
+                {t("logOut")}
               </Button>
             </div>
           </div>
         </Card>
 
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Notifications</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("notifications")}</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
               <div className="flex items-center gap-3">
@@ -691,8 +747,8 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   <Bell className="w-5 h-5 text-amber-600 dark:text-amber-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Order Notifications</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Get notified for new orders and updates</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("orderNotifications")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("orderNotificationsDesc")}</p>
                 </div>
               </div>
               <button
@@ -714,8 +770,8 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   <Bell className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">System Notifications</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">System updates and announcements</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("systemNotifications")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("systemNotificationsDesc")}</p>
                 </div>
               </div>
               <button
@@ -735,7 +791,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
         </Card>
 
         <Card className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Notification Sound</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("notificationSound")}</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
               <div className="flex items-center gap-3">
@@ -743,8 +799,8 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   <Volume2 className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Enable Notification Sounds</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Play a sound when new orders arrive</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("enableNotificationSounds")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("enableNotificationSoundsDesc")}</p>
                 </div>
               </div>
               <button
@@ -764,7 +820,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
             {soundEnabled && (
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Volume</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{t("volume")}</label>
                   <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{soundVolume}%</span>
                 </div>
                 <input
@@ -782,7 +838,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
                   className="gap-1.5 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-950"
                 >
                   <Play className="w-3.5 h-3.5" />
-                  Test Sound
+                  {t("testSound")}
                 </Button>
               </div>
             )}
@@ -800,7 +856,7 @@ export default function StaffProfile({ onNavigate }: StaffProfileProps) {
             {saving ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
             ) : (
-              <><Save className="w-4 h-4" /> Save Changes</>
+              <><Save className="w-4 h-4" /> {t("saveChanges")}</>
             )}
           </Button>
         </div>

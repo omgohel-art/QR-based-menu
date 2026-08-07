@@ -3,9 +3,10 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { motion } from "framer-motion";
-import { CheckCircle, ShoppingBag, Clock, ChefHat, Utensils, ChevronDown, ChevronUp, Receipt, ArrowRight } from "lucide-react";
+import { CheckCircle, ShoppingBag, Clock, ChefHat, Utensils, ChevronDown, ChevronUp, Receipt, ArrowRight, Star } from "lucide-react";
 import Footer from "@/components/marketing/Footer";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { calculatePoints } from "@/hooks/useLoyalty";
 
 interface SuccessState {
   tableCode: string;
@@ -189,6 +190,27 @@ export default function OrderSuccessPage() {
               </span>
             </div>
           </motion.div>
+
+          {/* Loyalty Points Earned */}
+          {(() => {
+            const pts = calculatePoints(state?.total ?? 0);
+            if (pts <= 0) return null;
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.45, duration: 0.35 }}
+                className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-[20px] p-5 text-left"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Star className="w-5 h-5 text-amber-500" fill="currentColor" />
+                  <h3 className="text-sm font-bold text-[#4A3428]">Loyalty Points Earned</h3>
+                </div>
+                <p className="text-xl font-bold text-[#C08A4D]" style={{ fontFamily: "var(--font-caveat)" }}>+{pts} Points</p>
+                <p className="text-[11px] text-[#8B7E72] mt-1">Points have been added to your wallet.</p>
+              </motion.div>
+            );
+          })()}
 
           {/* Bill Details */}
           {orderItems && orderItems.length > 0 && (

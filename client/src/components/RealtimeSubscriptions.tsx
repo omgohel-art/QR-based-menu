@@ -96,6 +96,16 @@ export default function RealtimeSubscriptions() {
                 orderNumber: orderNumber ?? undefined,
               });
             }
+            if (table === "serviceRequests" && payload.eventType === "INSERT") {
+              const row = payload.new as Record<string, unknown>;
+              const tableCode = row.tableCode as string | undefined;
+              const requestLabel = row.requestLabel as string | undefined;
+              addNotification({
+                type: "system",
+                title: requestLabel ? `Service request: ${requestLabel}` : "Service request received",
+                body: `Table ${tableCode || "unknown"} needs assistance.`,
+              });
+            }
           }
         )
         .subscribe()
