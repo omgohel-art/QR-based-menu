@@ -17,44 +17,72 @@ export default function ResetPassword() {
   const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
-    const hash = window.location.hash;
-    const query = window.location.search;
+    const handleResetSession = async () => {
+      const hash = window.location.hash;
+      const query = window.location.search;
+      const fullUrl = window.location.href;
 
-    // Supabase may send tokens in the hash (#access_token=...) or query (?access_token=...)
-    const tokenSource = (hash && hash.includes("access_token")) ? hash.substring(1) : (query && query.includes("access_token") ? query.substring(1) : "");
-    const params = new URLSearchParams(tokenSource);
-    const accessToken = params.get("access_token");
-    const refreshToken = params.get("refresh_token");
-    const errorDescription = params.get("error_description");
+      // Detect Supabase error first
+      const queryParams = new URLSearchParams(query);
+      const errorDescription = queryParams.get("error_description");
+      if (errorDescription) {
+        setError(decodeURIComponent(errorDescription.replace(/\+/g, " ")));
+        setInitializing(false);
+        return;
+      }
 
-    if (errorDescription) {
-      setError(decodeURIComponent(errorDescription.replace(/\+/g, " ")));
-      setInitializing(false);
-      return;
-    }
+      // 1) Implicit flow: tokens in URL hash (#access_token=...&refresh_token=...)
+      const hashParams = new URLSearchParams(hash.startsWith("#") ? hash.substring(1) : hash);
+      const accessToken = hashParams.get("access_token");
+      const refreshToken = hashParams.get("refresh_token");
 
-    if (accessToken && refreshToken) {
-      supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      }).then(({ error }) => {
+      if (accessToken && refreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
         if (error) setError("Invalid or expired reset link");
         setInitializing(false);
-        // Clean the URL so a refresh doesn't replay the tokens
         window.history.replaceState(null, "", window.location.pathname);
-      });
-    } else {
-      // No tokens in URL — check if there's already a session
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (!session) {
-          // Show error instead of silently redirecting, so user knows the link is bad
-          setError("Invalid or expired reset link. Please request a new one.");
-          setInitializing(false);
-          return;
-        }
+        return;
+      }
+
+      // 2) PKCE flow: code in query (?code=...)
+      const code = queryParams.get("code");
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) setError("Invalid or expired reset link");
         setInitializing(false);
-      });
-    }
+        window.history.replaceState(null, "", window.location.pathname);
+        return;
+      }
+
+      // 3) Recovery / verify flows may put tokens in either — also check query
+      const queryAccessToken = queryParams.get("access_token");
+      const queryRefreshToken = queryParams.get("refresh_token");
+      if (queryAccessToken && queryRefreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: queryAccessToken,
+          refresh_token: queryRefreshToken,
+        });
+        if (error) setError("Invalid or expired reset link");
+        setInitializing(false);
+        window.history.replaceState(null, "", window.location.pathname);
+        return;
+      }
+
+      // 4) detectSessionInUrl: Supabase auto-detects on the client when configured.
+      //    If we reach here with no tokens, just check existing session.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setError("Invalid or expired reset link. Please request a new one.");
+        setInitializing(false);
+        return;
+      }
+      setInitializing(false);
+    };
+
+    handleResetSession();
   }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
