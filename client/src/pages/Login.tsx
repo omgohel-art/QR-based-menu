@@ -207,7 +207,7 @@ export default function Login() {
               <div className="flex justify-end">
                 <button
                   type="button"
-                  onClick={() => navigate("/forgot-password")}
+                  onClick={() => navigate("/forgot-password-otp")}
                   className="text-sm text-blue-500 hover:text-blue-700 hover:underline"
                 >
                   Forgot Password?
