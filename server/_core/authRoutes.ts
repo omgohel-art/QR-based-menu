@@ -132,8 +132,9 @@ router.post("/api/auth/send-otp", async (req, res) => {
 
     return res.json({ success: true, message: "OTP sent to your email" });
   } catch (err: unknown) {
-    console.error("send-otp error:", err instanceof Error ? err.message : err);
-    return res.status(500).json({ error: "Internal server error" });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("send-otp error:", msg);
+    return res.status(500).json({ error: `OTP send failed: ${msg}` });
   }
 });
 
