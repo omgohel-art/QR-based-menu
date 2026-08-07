@@ -117,7 +117,7 @@ router.post("/api/auth/send-otp", async (req, res) => {
       return res.status(429).json({ error: "Too many requests. Please wait before requesting another code." });
     }
 
-    const otp = String(crypto.randomInt(100000, 1000000));
+    const otp = String(crypto.randomInt(1000, 10000)); // 4 digits
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     await restQuery(
