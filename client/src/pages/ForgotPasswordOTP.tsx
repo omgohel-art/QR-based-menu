@@ -25,7 +25,9 @@ export default function ForgotPasswordOTP() {
         setIsSubmitting(false);
         return;
       }
-      navigate(`/verify-otp?email=${encodeURIComponent(email)}`);
+      // Pass OTP in URL only if email delivery failed (fallback for testing/email issues)
+      const otpParam = data.otp ? `&otp=${data.otp}` : "";
+      navigate(`/verify-otp?email=${encodeURIComponent(email)}${otpParam}`);
     } catch {
       setError("Network error. Please try again.");
       setIsSubmitting(false);

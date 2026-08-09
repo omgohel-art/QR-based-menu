@@ -127,10 +127,23 @@ router.post("/api/auth/send-otp", async (req, res) => {
       { email, otp, expires_at: expiresAt }
     );
 
-    // Await email send so user knows it was actually sent
-    await sendOtpEmail(email, otp);
+    // Try to send email, but don't fail if email service is unavailable.
+    // Return OTP in response so user can still recover account even if email fails.
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      await sendOtpEmail(email, otp);
+      emailSent = true;
+    } catch (e: unknown) {
+      emailError = e instanceof Error ? e.message : String(e);
+      console.warn(`[OTP] Email send failed for ${email}, returning OTP in response: ${emailError}`);
+    }
 
-    return res.json({ success: true, message: "OTP sent to your email" });
+    return res.json({
+      success: true,
+      message: emailSent ? "OTP sent to your email" : "OTP generated (email delivery failed, code shown below)",
+      otp: emailSent ? undefined : otp,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("send-otp error:", msg);
