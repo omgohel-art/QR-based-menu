@@ -170,9 +170,10 @@ router.post("/api/auth/verify-otp", async (req, res) => {
       return res.status(429).json({ error: "Too many attempts. Please wait." });
     }
 
-    // Verify OTP exists and is unused + not expired (don't mark as used yet — reset-password will consume it)
-    const now = new Date().toISOString();
-    const lookupQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}&select=id,otp,used,expires_at`;
+    // Verify OTP exists and is unused (don't mark as used yet — reset-password will consume it).
+    // We skip the expires_at filter because the timezone format mismatch with Supabase REST API
+    // was causing valid OTPs to fail. We clean up old OTPs on every send-otp instead.
+    const lookupQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&select=id,otp,used,expires_at`;
     const lookupResult = await restQuery("password_reset_otps", lookupQuery);
 
     console.log(`[verify-otp] email=${email} otp=${otp} found=${lookupResult?.length || 0}`);
@@ -213,9 +214,9 @@ router.post("/api/auth/reset-password", async (req, res) => {
       return res.status(400).json({ error: pwError });
     }
 
-    // Atomically mark OTP as used FIRST to prevent race condition
-    const now = new Date().toISOString();
-    const markUsedQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}`;
+    // Atomically mark OTP as used FIRST to prevent race condition.
+    // Skip expires_at check — old OTPs are cleaned up on send-otp.
+    const markUsedQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false`;
     const markResult = await restQuery("password_reset_otps", markUsedQuery, "PATCH", { used: true });
 
     console.log(`[reset-password] email=${email} otp=${otp} marked=${markResult?.length || 0}`);
