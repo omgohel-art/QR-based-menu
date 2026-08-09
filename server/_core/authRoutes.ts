@@ -120,6 +120,13 @@ router.post("/api/auth/send-otp", async (req, res) => {
     const otp = String(crypto.randomInt(1000, 10000)); // 4 digits
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
+    // Clean up any existing OTPs for this email so only the latest is valid
+    try {
+      await restQuery("password_reset_otps", `?email=eq.${encodeURIComponent(email)}`, "DELETE");
+    } catch (e) {
+      // non-fatal
+    }
+
     await restQuery(
       "password_reset_otps",
       "?",
