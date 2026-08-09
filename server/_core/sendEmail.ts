@@ -1,12 +1,25 @@
-import { resendBreaker, fire } from "./circuitBreaker";
+import nodemailer from "nodemailer";
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const FROM_EMAIL = process.env.FROM_EMAIL || "MAMA Cafe <onboarding@resend.dev>";
+const GMAIL_USER = process.env.GMAIL_USER || "";
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || (GMAIL_USER ? `MAMA Cafe <${GMAIL_USER}>` : "MAMA Cafe <noreply@mama.cafe>");
+
+let _transporter: nodemailer.Transporter | null = null;
+function getTransporter(): nodemailer.Transporter | null {
+  if (!_transporter && GMAIL_USER && GMAIL_APP_PASSWORD) {
+    _transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    });
+  }
+  return _transporter;
+}
 
 export async function sendOtpEmail(email: string, otp: string): Promise<void> {
-  if (!RESEND_API_KEY) {
-    console.log(`[OTP] Email not configured. Would send to ${email}`);
-    return;
+  const transporter = getTransporter();
+  if (!transporter) {
+    console.log(`[OTP] Gmail SMTP not configured (missing GMAIL_USER or GMAIL_APP_PASSWORD). OTP for ${email}: ${otp}`);
+    throw new Error("Email service not configured");
   }
 
   const html = `
@@ -18,27 +31,17 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
     </div>
   `;
 
-  const res = await fire(resendBreaker, async () => {
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ from: FROM_EMAIL, to: email, subject: "Password Reset OTP - MAMA Cafe", html }),
+  try {
+    const info = await transporter.sendMail({
+      from: FROM_EMAIL,
+      to: email,
+      subject: "Password Reset OTP - MAMA Cafe",
+      html,
     });
-    if (!r.ok) {
-      const errText = await r.text();
-      const sanitized = errText.replace(/re_[a-zA-Z0-9]{10,}/g, "re_[REDACTED]");
-      throw new Error(`Send failed: ${sanitized}`);
-    }
-    return r;
-  }).catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : "Resend unavailable";
+    console.log(`[OTP] Email sent to ${email} (messageId: ${info.messageId})`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error(`[OTP] Email send failed: ${msg}`);
-    return null;
-  });
-
-  if (!res) throw new Error("Failed to send email");
-  console.log(`[OTP] Email sent to ${email}`);
+    throw new Error(`Failed to send email: ${msg}`);
+  }
 }
