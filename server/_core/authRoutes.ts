@@ -172,10 +172,15 @@ router.post("/api/auth/verify-otp", async (req, res) => {
 
     // Verify OTP exists and is unused + not expired (don't mark as used yet — reset-password will consume it)
     const now = new Date().toISOString();
-    const lookupQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}&select=id`;
+    const lookupQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}&select=id,otp,used,expires_at`;
     const lookupResult = await restQuery("password_reset_otps", lookupQuery);
 
+    console.log(`[verify-otp] email=${email} otp=${otp} found=${lookupResult?.length || 0}`);
     if (!lookupResult || lookupResult.length === 0) {
+      // Debug: check what OTPs exist for this email
+      const debugQuery = `?email=eq.${encodeURIComponent(email)}&select=id,otp,used,expires_at&order=created_at.desc&limit=5`;
+      const debugResult = await restQuery("password_reset_otps", debugQuery);
+      console.log(`[verify-otp] DEBUG OTPs for ${email}:`, JSON.stringify(debugResult));
       return res.status(400).json({ error: "Incorrect code" });
     }
 
@@ -213,7 +218,12 @@ router.post("/api/auth/reset-password", async (req, res) => {
     const markUsedQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}`;
     const markResult = await restQuery("password_reset_otps", markUsedQuery, "PATCH", { used: true });
 
+    console.log(`[reset-password] email=${email} otp=${otp} marked=${markResult?.length || 0}`);
     if (!markResult || markResult.length === 0) {
+      // Debug: check what OTPs exist
+      const debugQuery = `?email=eq.${encodeURIComponent(email)}&select=id,otp,used,expires_at&order=created_at.desc&limit=5`;
+      const debugResult = await restQuery("password_reset_otps", debugQuery);
+      console.log(`[reset-password] DEBUG OTPs for ${email}:`, JSON.stringify(debugResult));
       return res.status(400).json({ error: "Incorrect code" });
     }
 
