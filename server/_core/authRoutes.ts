@@ -163,13 +163,12 @@ router.post("/api/auth/verify-otp", async (req, res) => {
       return res.status(429).json({ error: "Too many attempts. Please wait." });
     }
 
-    // Atomically mark OTP as used FIRST to prevent double-use race condition
+    // Verify OTP exists and is unused + not expired (don't mark as used yet — reset-password will consume it)
     const now = new Date().toISOString();
-    const markUsedQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}`;
-    const markResult = await restQuery("password_reset_otps", markUsedQuery, "PATCH", { used: true });
+    const lookupQuery = `?email=eq.${encodeURIComponent(email)}&otp=eq.${otp}&used=eq.false&expires_at=gte.${encodeURIComponent(now)}&select=id`;
+    const lookupResult = await restQuery("password_reset_otps", lookupQuery);
 
-    // If no rows were updated, the OTP was already used or expired
-    if (!markResult || markResult.length === 0) {
+    if (!lookupResult || lookupResult.length === 0) {
       return res.status(400).json({ error: "Incorrect code" });
     }
 
