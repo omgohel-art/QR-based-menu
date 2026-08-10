@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import dns from "dns";
 
 const GMAIL_USER = process.env.GMAIL_USER || "";
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || "";
@@ -7,17 +8,18 @@ const FROM_EMAIL = process.env.FROM_EMAIL || (GMAIL_USER ? `MAMA Cafe <${GMAIL_U
 let _transporter: nodemailer.Transporter | null = null;
 function getTransporter(): nodemailer.Transporter | null {
   if (!_transporter && GMAIL_USER && GMAIL_APP_PASSWORD) {
+    // Force Node's DNS resolver to prefer IPv4. Render's free instances lack
+    // IPv6 outbound connectivity, so we must avoid Gmail's AAAA records.
+    dns.setDefaultResultOrder("ipv4first");
+
     _transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
       port: 465,
       secure: true, // TLS
       auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
       tls: {
-        // Force IPv4 — Render instances lack IPv6 outbound connectivity
         rejectUnauthorized: false,
       },
-      // Hint nodemailer to prefer IPv4 by resolving to IPv4 addresses
-      family: 4,
     });
   }
   return _transporter;
