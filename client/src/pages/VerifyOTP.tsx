@@ -6,9 +6,8 @@ export default function VerifyOTP() {
   const [, navigate] = useLocation();
   const params = new URLSearchParams(window.location.search);
   const email = params.get("email") || "";
-  const devOtp = params.get("otp") || "";
 
-  const [otp, setOtp] = useState<string[]>(devOtp && /^\d{4}$/.test(devOtp) ? devOtp.split("") : ["", "", "", ""]);
+  const [otp, setOtp] = useState<string[]>(["", "", "", ""]);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
@@ -97,22 +96,6 @@ export default function VerifyOTP() {
         </button>
 
         <div className="text-center mb-8">
-          {devOtp && (
-            <div className="mb-6 p-4 bg-amber-50 border border-amber-300 rounded-xl text-left">
-              <p className="text-xs font-semibold text-amber-800 mb-1">⚠️ Email delivery failed — use this code</p>
-              <div className="flex items-center justify-between">
-                <p className="text-3xl font-bold tracking-[12px] text-amber-900 font-mono">{devOtp}</p>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard.writeText(devOtp)}
-                  className="text-xs text-amber-700 hover:text-amber-900 underline"
-                >
-                  Copy
-                </button>
-              </div>
-              <p className="text-xs text-amber-700 mt-2">Configure Gmail SMTP in Render env vars to receive real emails.</p>
-            </div>
-          )}
           <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-100 flex items-center justify-center mb-4">
             <ShieldCheck className="w-7 h-7 text-blue-600" />
           </div>
