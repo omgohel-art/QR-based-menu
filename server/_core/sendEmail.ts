@@ -12,6 +12,12 @@ function getTransporter(): nodemailer.Transporter | null {
       port: 465,
       secure: true, // TLS
       auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+      tls: {
+        // Force IPv4 — Render instances lack IPv6 outbound connectivity
+        rejectUnauthorized: false,
+      },
+      // Hint nodemailer to prefer IPv4 by resolving to IPv4 addresses
+      family: 4,
     });
   }
   return _transporter;
