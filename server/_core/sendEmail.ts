@@ -1,34 +1,17 @@
-import nodemailer from "nodemailer";
-import dns from "dns";
+/**
+ * Email sender — uses Brevo HTTPS API (works on Render free tier where SMTP is blocked).
+ * Sign up at https://www.brevo.com/ — free tier: 300 emails/day.
+ * Get API key from Brevo Dashboard → Settings → SMTP & API → API Keys.
+ * Set BREVO_API_KEY env var in Render.
+ */
+const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || (process.env.GMAIL_USER ? `MAMA Cafe <${process.env.GMAIL_USER}>` : "MAMA Cafe <noreply@mama.cafe>");
 
-const GMAIL_USER = process.env.GMAIL_USER || "";
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || "";
-const FROM_EMAIL = process.env.FROM_EMAIL || (GMAIL_USER ? `MAMA Cafe <${GMAIL_USER}>` : "MAMA Cafe <noreply@mama.cafe>");
-
-let _transporter: nodemailer.Transporter | null = null;
-function getTransporter(): nodemailer.Transporter | null {
-  if (!_transporter && GMAIL_USER && GMAIL_APP_PASSWORD) {
-    // Force Node's DNS resolver to prefer IPv4. Render's free instances lack
-    // IPv6 outbound connectivity, so we must avoid Gmail's AAAA records.
-    dns.setDefaultResultOrder("ipv4first");
-
-    _transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true, // TLS
-      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
-      tls: {
-        rejectUnauthorized: false,
-      },
-    });
-  }
-  return _transporter;
-}
+const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
 export async function sendOtpEmail(email: string, otp: string): Promise<void> {
-  const transporter = getTransporter();
-  if (!transporter) {
-    console.log(`[OTP] Gmail SMTP not configured (missing GMAIL_USER or GMAIL_APP_PASSWORD). OTP for ${email}: ${otp}`);
+  if (!BREVO_API_KEY) {
+    console.log(`[OTP] Brevo API key not configured. OTP for ${email}: ${otp}`);
     throw new Error("Email service not configured");
   }
 
@@ -41,14 +24,31 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
     </div>
   `;
 
+  // Brevo requires a plain email in the "sender" field — extract from "Name <email@x>" format
+  const senderEmail = FROM_EMAIL.match(/<([^>]+)>/)?.[1] || FROM_EMAIL;
+
   try {
-    const info = await transporter.sendMail({
-      from: FROM_EMAIL,
-      to: email,
-      subject: "Password Reset OTP - MAMA Cafe",
-      html,
+    const res = await fetch(BREVO_API_URL, {
+      method: "POST",
+      headers: {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { name: "MAMA Cafe", email: senderEmail },
+        to: [{ email }],
+        subject: "Password Reset OTP - MAMA Cafe",
+        htmlContent: html,
+      }),
     });
-    console.log(`[OTP] Email sent to ${email} (messageId: ${info.messageId})`);
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[OTP] Brevo API error: ${res.status} ${errText}`);
+      throw new Error(`Brevo send failed: ${res.status}`);
+    }
+
+    console.log(`[OTP] Email sent to ${email} via Brevo`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[OTP] Email send failed: ${msg}`);
