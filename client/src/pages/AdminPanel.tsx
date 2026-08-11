@@ -11,10 +11,11 @@ import AdminAvatar from "@/components/admin/AdminAvatar";
 import OnlineIndicator from "@/components/OnlineIndicator";
 import ChangePassword from "@/components/admin/ChangePassword";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, LogOut, Eye, EyeOff, Shield, Mail, FileText, Sparkles, Download, Languages, BookOpen } from "lucide-react";
+import { Settings, LogOut, Eye, EyeOff, Shield, Mail, FileText, Sparkles, Download, Languages, BookOpen, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import Footer from "@/components/marketing/Footer";
 import OnboardingWizard, { isOnboardingDismissed } from "@/components/admin/OnboardingWizard";
+import TrialBanner from "@/components/admin/TrialBanner";
 
 // Lazy-loaded heavy components (only loaded when their tab/page is active)
 const BusinessSettings = lazy(() => import("@/components/BusinessSettings"));
@@ -34,15 +35,20 @@ const AdminLoyaltyPanel = lazy(() => import("@/components/admin/AdminLoyaltyPane
 const AdminSpinPanel = lazy(() => import("@/components/admin/AdminSpinPanel"));
 const BusinessPreferences = lazy(() => import("@/components/admin/BusinessPreferences"));
 const TakeOrder = lazy(() => import("@/components/admin/TakeOrder"));
+const AggregatorOrderModal = lazy(() => import("@/components/admin/AggregatorOrderModal"));
+const AggregatorStatsCard = lazy(() => import("@/components/admin/AggregatorStatsCard"));
 const StaffManagement = lazy(() => import("@/components/admin/StaffManagement"));
 const StaffActivity = lazy(() => import("@/components/admin/StaffActivity"));
 const StaffProfile = lazy(() => import("@/components/admin/StaffProfile"));
 const LeaveRequestAdmin = lazy(() => import("@/components/admin/LeaveRequestAdmin"));
 const InventoryPanel = lazy(() => import("@/components/admin/InventoryPanel"));
+const RecipeManager = lazy(() => import("@/components/admin/RecipeManager"));
 const SettledBillsHistory = lazy(() => import("@/components/admin/SettledBillsHistory"));
 const EODReportModal = lazy(() => import("@/components/admin/EODReportModal"));
 const Help = lazy(() => import("@/components/admin/Help"));
 const ReservationsPanel = lazy(() => import("@/components/admin/ReservationsPanel"));
+const WhatsAppSettingsPanel = lazy(() => import("@/components/admin/WhatsAppSettingsPanel"));
+const GstReportsPanel = lazy(() => import("@/components/admin/GstReportsPanel"));
 
 const TabFallback = () => (
   <div className="space-y-4">
@@ -81,11 +87,12 @@ export default function AdminPanel() {
     return isAdmin ? "orders" : "orderqueue";
   });
   const isKitchenMode = !isAdmin;
-  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "business">("general");
+  const [settingsSubTab, setSettingsSubTab] = useState<"general" | "business" | "whatsapp" | "gst">("general");
   const [avatarPage, setAvatarPage] = useState<string | null>(null);
   const [hasViewedLeaveRequests, setHasViewedLeaveRequests] = useState(false);
   const [showEODModal, setShowEODModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showAggregatorModal, setShowAggregatorModal] = useState(false);
   const { locale, toggleLocale, t: st } = useStaffLanguage();
 
   useEffect(() => {
@@ -459,10 +466,25 @@ export default function AdminPanel() {
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-6">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Orders</h2>
+              <Button
+                onClick={() => setShowAggregatorModal(true)}
+                variant="default"
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <ShoppingBag className="w-4 h-4 mr-1" />
+                Log Aggregator Order
+             </Button>
+           </div>
+            <Suspense fallback={<TabFallback />}>
+              <AggregatorStatsCard />
+           </Suspense>
             <Suspense fallback={<TabFallback />}>
               <SettledBills onPrint={(data) => setPrintData(data)} />
-            </Suspense>
-          </TabsContent>
+           </Suspense>
+         </TabsContent>
 
           <TabsContent value="orderqueue" className="space-y-6">
             <Suspense fallback={<TabFallback />}>
@@ -488,8 +510,11 @@ export default function AdminPanel() {
            <TabsContent value="inventory" className="space-y-6">
             <Suspense fallback={<TabFallback />}>
               <InventoryPanel />
-            </Suspense>
-          </TabsContent>
+           </Suspense>
+            <Suspense fallback={<TabFallback />}>
+              <RecipeManager />
+           </Suspense>
+         </TabsContent>
           <TabsContent value="reservations" className="space-y-6">
             <Suspense fallback={<TabFallback />}>
               <ReservationsPanel />
@@ -504,7 +529,7 @@ export default function AdminPanel() {
             </Suspense>
           </TabsContent>
           <TabsContent value="settings" className="space-y-6">
-            <div className="flex gap-2 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => setSettingsSubTab("general")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -514,7 +539,7 @@ export default function AdminPanel() {
                 }`}
               >
                 General Settings
-              </button>
+             </button>
               <button
                 onClick={() => setSettingsSubTab("business")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -524,8 +549,28 @@ export default function AdminPanel() {
                 }`}
               >
                 Business Info
-              </button>
-            </div>
+             </button>
+              <button
+                onClick={() => setSettingsSubTab("whatsapp")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  settingsSubTab === "whatsapp"
+                    ? "bg-slate-900 text-white dark:bg-slate-700"
+                    : "bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
+                }`}
+              >
+                WhatsApp Daily Summary
+             </button>
+              <button
+                onClick={() => setSettingsSubTab("gst")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  settingsSubTab === "gst"
+                    ? "bg-slate-900 text-white dark:bg-slate-700"
+                    : "bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
+                }`}
+              >
+                GST Reports (GSTR-1)
+             </button>
+           </div>
 
             {settingsSubTab === "general" && (
             <>
@@ -743,12 +788,24 @@ export default function AdminPanel() {
             {settingsSubTab === "business" && (
               <Suspense fallback={<TabFallback />}>
                 <BusinessSettings />
-              </Suspense>
+             </Suspense>
             )}
-          </TabsContent>
-        </Tabs>
+
+            {settingsSubTab === "whatsapp" && (
+              <Suspense fallback={<TabFallback />}>
+                <WhatsAppSettingsPanel />
+             </Suspense>
+            )}
+
+            {settingsSubTab === "gst" && (
+              <Suspense fallback={<TabFallback />}>
+                <GstReportsPanel />
+             </Suspense>
+            )}
+         </TabsContent>
+       </Tabs>
       )}
-      </div>
+     </div>
 
       {printData && (
         <Suspense fallback={null}>
@@ -765,6 +822,12 @@ export default function AdminPanel() {
       <Suspense fallback={null}>
         <EODReportModal open={showEODModal} onClose={() => setShowEODModal(false)} />
       </Suspense>
+
+      <TrialBanner />
+
+      <Suspense fallback={null}>
+        <AggregatorOrderModal open={showAggregatorModal} onClose={() => setShowAggregatorModal(false)} />
+     </Suspense>
 
       {isAdmin && (
         <OnboardingWizard

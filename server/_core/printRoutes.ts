@@ -26,7 +26,7 @@ function isPrivateIP(ip: string): boolean {
   return PRIVATE_RANGES.some((range) => range.test(ip));
 }
 
-function sanitizeReceiptField(value: string): string {
+export function sanitizeReceiptField(value: string): string {
   return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
@@ -147,38 +147,49 @@ function sendToPrinter(ip: string, port: number, data: Buffer): Promise<void> {
 function center(text: string): string {
   return `\x1B\x61\x01${text}\n`;
 }
+export { center };
 function left(text: string): string {
   return `\x1B\x61\x00${text}\n`;
 }
+export { left };
 function boldOn(): string {
   return "\x1B\x45\x01";
 }
+export { boldOn };
 function boldOff(): string {
   return "\x1B\x45\x00";
 }
+export { boldOff };
 function bigText(): string {
   return "\x1D\x21\x01";
 }
+export { bigText };
 function normalText(): string {
   return "\x1D\x21\x00";
 }
+export { normalText };
 function divider(): string {
   return "\x1B\x61\x00" + "-".repeat(48) + "\n";
 }
+export { divider };
 function thinDivider(): string {
   return "\x1B\x61\x00" + ".".repeat(48) + "\n";
 }
+export { thinDivider };
 function cut(): string {
   return "\x1D\x56\x00";
 }
+export { cut };
 function padRight(str: string, len: number): string {
   return str.length >= len ? str.substring(0, len) : str + " ".repeat(len - str.length);
 }
+export { padRight };
 function padLeft(str: string, len: number): string {
   return str.length >= len ? str : " ".repeat(len - str.length) + str;
 }
+export { padLeft };
 
-async function fetchPrinterSettings(authToken?: string): Promise<{ printerIp?: string; printerPort: number }> {
+export async function fetchPrinterSettings(authToken?: string): Promise<{ printerIp?: string; printerPort: number }> {
   let printerIp: string | undefined;
   let printerPort = 9100;
   try {
@@ -206,7 +217,7 @@ async function fetchPrinterSettings(authToken?: string): Promise<{ printerIp?: s
   return { printerIp, printerPort };
 }
 
-async function deliverOrQueue(
+export async function deliverOrQueue(
   type: "receipt" | "kot",
   printerIp: string,
   printerPort: number,

@@ -107,6 +107,7 @@ export const menuItems = pgTable("menuItems", {
   badge: varchar("badge", { length: 50 }),
   foodType: varchar("foodType", { length: 50 }).default("veg").notNull(),
   displayOrder: integer("displayOrder").default(0).notNull(),
+  hsnCode: varchar("hsnCode", { length: 8 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => ({
@@ -174,16 +175,32 @@ export const orders = pgTable("orders", {
   loyaltyAwardedAt: timestamp("loyaltyAwardedAt"),
   loyaltyReversed: boolean("loyaltyReversed").default(false),
   appliedCouponCode: varchar("appliedCouponCode", { length: 32 }),
-  couponDiscount: decimal("couponDiscount", { precision: 10, scale: 2 }).default(0),
-  finalTotalAfterDiscount: decimal("finalTotalAfterDiscount", { precision: 10, scale: 2 }).default(0),
+  couponDiscount: decimal("couponDiscount", { precision: 10, scale: 2 }).default("0"),
+  finalTotalAfterDiscount: decimal("finalTotalAfterDiscount", { precision: 10, scale: 2 }).default("0"),
+  // CRITICAL (C1/C17 fix): Razorpay IDs needed by the webhook to match a captured
+  // payment to the exact order that initiated it (rather than guessing among
+  // pending orders). Indexed for fast webhook lookups.
+  razorpayOrderId: varchar("razorpayOrderId", { length: 64 }),
+  razorpayPaymentId: varchar("razorpayPaymentId", { length: 64 }),
+  // Feature 4: aggregator orders (Zomato, Swiggy, manual walk-in).
+  // 'direct' = QR-order from a table. 'zomato'/'swiggy'/'manual' = logged by staff.
+  orderSource: varchar("orderSource", { length: 32 }).default("direct").notNull(),
+  aggregatorOrderId: varchar("aggregatorOrderId", { length: 64 }),
+  customerName: varchar("customerName", { length: 128 }),
+  customerPhone: varchar("customerPhone", { length: 32 }),
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => ({
   sessionIdIdx: index("ord_sessionId_idx").on(table.sessionId),
   submittedAtIdx: index("orders_submittedAt_idx").on(table.submittedAt),
   orderNumberIdx: index("orders_orderNumber_idx").on(table.orderNumber),
+  razorpayOrderIdIdx: index("orders_razorpayOrderId_idx").on(table.razorpayOrderId),
+  razorpayPaymentIdIdx: index("orders_razorpayPaymentId_idx").on(table.razorpayPaymentId),
+  aggregatorOrderIdIdx: index("orders_aggregatorOrderId_idx").on(table.aggregatorOrderId),
+  orderSourceIdx: index("orders_orderSource_idx").on(table.orderSource),
   orderStatusCheck: check("order_status_check", sql`${table.orderStatus} IN ('received', 'preparing', 'ready', 'delivered', 'cancelled')`),
   orderPaymentStatusCheck: check("order_payment_status_check", sql`${table.paymentStatus} IN ('pending', 'paid', 'failed', 'refunded')`),
+  orderSourceCheck: check("order_source_check", sql`${table.orderSource} IN ('direct', 'zomato', 'swiggy', 'manual', 'other')`),
 }));
 
 export type Order = typeof orders.$inferSelect;
@@ -363,9 +380,53 @@ export const businessSettings = pgTable("businessSettings", {
   loyaltyEnabled: boolean("loyaltyEnabled").default(true).notNull(),
   loyaltyRewardPercent: integer("loyaltyRewardPercent").default(5).notNull(),
   loyaltyPointsThreshold: integer("loyaltyPointsThreshold").default(100).notNull(),
+  // GST invoice compliance
+  invoiceCounter: integer("invoiceCounter").default(0).notNull(),
+  stateCode: varchar("stateCode", { length: 2 }),
+  panNumber: varchar("panNumber", { length: 10 }),
+  sacCode: varchar("sacCode", { length: 8 }),
+  cgstRate: integer("cgstRate").default(9).notNull(),
+  sgstRate: integer("sgstRate").default(9).notNull(),
+  igstRate: integer("igstRate").default(18).notNull(),
+  placeOfSupply: varchar("placeOfSupply", { length: 128 }),
+  isInterState: boolean("isInterState").default(false).notNull(),
+  // WhatsApp daily summary
+  whatsappNumber: varchar("whatsappNumber", { length: 20 }),
+  whatsappEnabled: boolean("whatsappEnabled").default(false).notNull(),
+  dailySummaryEnabled: boolean("dailySummaryEnabled").default(false).notNull(),
+  summaryHour: integer("summaryHour").default(23).notNull(),
+  summaryMinute: integer("summaryMinute").default(0).notNull(),
+  whatsappProvider: varchar("whatsappProvider", { length: 20 }).default("webhook"),
+  whatsappApiKey: text("whatsappApiKey"),
+  whatsappApiUrl: text("whatsappApiUrl"),
+  lowStockAlertsEnabled: boolean("lowStockAlertsEnabled").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  // Bug 9 follow-up / Feature 7: 14-day free trial.
+  // trialStartedAt is set the first time business settings are inserted.
+  // trialExpiresAt is computed as trialStartedAt + 14 days.
+  // licenseKey (nullable) lifts the trial cap when set to a valid key.
+  trialStartedAt: timestamp("trialStartedAt"),
+  trialExpiresAt: timestamp("trialExpiresAt"),
+  licenseKey: varchar("licenseKey", { length: 128 }),
+  licenseExpiresAt: timestamp("licenseExpiresAt"),
 });
+
+/**
+ * DailySummary entity: tracks sent WhatsApp daily summaries to prevent duplicates.
+ */
+export const dailySummaries = pgTable("dailySummaries", {
+  id: serial("id").primaryKey(),
+  summaryDate: varchar("summaryDate", { length: 10 }).notNull(),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
+  channel: varchar("channel", { length: 20 }).notNull(),
+  status: varchar("status", { length: 20 }).default("sent").notNull(),
+  payload: json("payload"),
+  errorMessage: text("errorMessage"),
+}, (table) => ({
+  summaryDateIdx: index("dailySummaries_summaryDate_idx").on(table.summaryDate),
+  summaryDateChannelUnique: uniqueIndex("dailySummaries_date_channel_unique").on(table.summaryDate, table.channel),
+}));
 
 export type BusinessSettings = typeof businessSettings.$inferSelect;
 export type InsertBusinessSettings = typeof businessSettings.$inferInsert;
@@ -461,6 +522,9 @@ export const inventoryItems = pgTable("inventoryItems", {
   supplierIdx: index("inv_supplier_idx").on(table.supplier),
   invCategoryCheck: check("inv_category_check", sql`${table.category} IN ('Coffee Beans', 'Tea', 'Milk & Dairy', 'Bread & Bakery', 'Vegetables', 'Fruits', 'Sauces', 'Syrups', 'Spices', 'Beverages', 'Packaging', 'Cleaning Supplies', 'Other')`),
   invUnitCheck: check("inv_unit_check", sql`${table.unit} IN ('kg', 'g', 'L', 'ml', 'pcs', 'bottles', 'packets', 'boxes')`),
+  // CRITICAL (C5 fix): Prevent negative stock at the DB layer. Combined with the
+  // atomic deduction in recipeRoutes.ts, this guarantees no overselling under concurrency.
+  invCurrentStockNonNegative: check("inv_currentStock_nonneg", sql`${table.currentStock} >= 0`),
 }));
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;

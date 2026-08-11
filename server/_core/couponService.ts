@@ -97,6 +97,10 @@ export async function validateCoupon(code: string, customerPhone?: string): Prom
   coupon?: CouponRecord;
   error?: string;
 }> {
+  // H9 fix: validateCoupon is now READ-ONLY. It does not mutate the row's status
+  // (the previous code flipped status='expired' as a side effect, which made
+  // retries and concurrent validations flaky). Expiry is reported as a valid
+  // result with an `error` field; the caller decides whether to flip status.
   const rows = await sql()`SELECT * FROM "loyaltyCoupons" WHERE upper(code) = ${code.toUpperCase()}`;
   if (rows.length === 0) return { valid: false, error: "Coupon not found" };
   const coupon = rows[0] as CouponRecord;
@@ -104,10 +108,11 @@ export async function validateCoupon(code: string, customerPhone?: string): Prom
   if (coupon.status === "used") return { valid: false, error: "Coupon already used" };
   if (coupon.status === "expired") return { valid: false, error: "Coupon expired" };
   if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
-    await sql()`UPDATE "loyaltyCoupons" SET status = 'expired' WHERE id = ${coupon.id}`;
     return { valid: false, error: "Coupon expired" };
   }
   if (customerPhone) {
+    // H10 fix: phone ownership is enforced, but to avoid leaking existence we
+    // do not distinguish "phone not found" from "phone doesn't own this coupon".
     const wallet = await sql()`SELECT id FROM "loyaltyWallets" WHERE "customerPhone" = ${customerPhone}`;
     if (wallet.length === 0 || coupon.walletId !== (wallet[0] as any).id) {
       return { valid: false, error: "Coupon does not belong to this customer" };
@@ -145,7 +150,7 @@ export async function getCustomerCoupons(phone: string): Promise<CouponRecord[]>
     WHERE w."customerPhone" = ${phone}
     ORDER BY c."createdAt" DESC
   `;
-  return rows as CouponRecord[];
+  return rows as unknown as CouponRecord[];
 }
 
 export async function getActiveCoupons(phone: string): Promise<CouponRecord[]> {
@@ -156,7 +161,7 @@ export async function getActiveCoupons(phone: string): Promise<CouponRecord[]> {
     AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
     ORDER BY c."createdAt" DESC
   `;
-  return rows as CouponRecord[];
+  return rows as unknown as CouponRecord[];
 }
 
 export async function getAllCoupons(): Promise<(CouponRecord & { customerPhone: string; customerName: string | null })[]> {

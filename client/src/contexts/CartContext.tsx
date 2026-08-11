@@ -17,25 +17,41 @@ interface CartContextValue {
   updateQuantity: (menuItemId: number, quantity: number) => void;
   clearCart: () => void;
   setTableCode: (code: string) => void;
+  deviceSessionId: string;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
 const MAX_ITEM_QUANTITY = 10;
 const CART_TTL_MS = 60 * 60 * 1000;
 
-function getStorageKey(code?: string | null): string {
-  return `cafe-cart-${code || "default"}`;
+// CRITICAL (C24 fix): the cart was previously keyed only by `tableCode`, which
+// meant a new customer scanning the same QR inherited the previous customer's
+// cart — including any personal notes. We now include a per-device session UUID
+// in the storage key so each browser session is isolated. Even if the device
+// stays on the same table, a new session ID = fresh cart.
+function getOrCreateDeviceSessionId(): string {
+  let id = sessionStorage.getItem("cafe-device-session-id");
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem("cafe-device-session-id", id);
+  }
+  return id;
 }
 
-function loadCart(code?: string | null): CartItem[] {
+function getStorageKey(code?: string | null, deviceId?: string): string {
+  return `cafe-cart-${deviceId || "default"}-${code || "default"}`;
+}
+
+function loadCart(code: string | null | undefined, deviceId: string): CartItem[] {
   try {
-    const raw = localStorage.getItem(getStorageKey(code));
+    const raw = localStorage.getItem(getStorageKey(code, deviceId));
     if (raw) {
       const stored = JSON.parse(raw);
       if (stored && stored.savedAt && Date.now() - stored.savedAt < CART_TTL_MS) {
         return stored.items || [];
       }
-      localStorage.removeItem(getStorageKey(code));
+      localStorage.removeItem(getStorageKey(code, deviceId));
     }
   } catch {}
   return [];
@@ -44,8 +60,9 @@ function loadCart(code?: string | null): CartItem[] {
 export { MAX_ITEM_QUANTITY };
 
 export function CartProvider({ children }: { children: ReactNode }) {
+  const deviceSessionId = useMemo(() => getOrCreateDeviceSessionId(), []);
   const [tableCode, setTableCodeState] = useState<string | null>(null);
-  const [cart, setCart] = useState<CartItem[]>(() => loadCart(null));
+  const [cart, setCart] = useState<CartItem[]>(() => loadCart(null, deviceSessionId));
   const cartRef = useRef(cart);
   cartRef.current = cart;
 
@@ -53,16 +70,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setTableCodeState(prev => {
       if (prev === code) return prev;
       const data = JSON.stringify({ items: cartRef.current, savedAt: Date.now() });
-      localStorage.setItem(getStorageKey(prev), data);
+      localStorage.setItem(getStorageKey(prev, deviceSessionId), data);
       return code;
     });
-    setCart(loadCart(code));
-  }, []);
+    setCart(loadCart(code, deviceSessionId));
+  }, [deviceSessionId]);
 
   useEffect(() => {
     const data = JSON.stringify({ items: cart, savedAt: Date.now() });
-    localStorage.setItem(getStorageKey(tableCode), data);
-  }, [cart, tableCode]);
+    localStorage.setItem(getStorageKey(tableCode, deviceSessionId), data);
+  }, [cart, tableCode, deviceSessionId]);
 
   const addToCart = useCallback((menuItem: { id: number; name: string; price: number | string; imageUrl?: string | null }) => {
     setCart(prev => {
@@ -118,9 +135,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <CartContext.Provider value={{ cart, cartTotal, cartItemCount, addToCart, removeFromCart, updateQuantity, clearCart, setTableCode }}>
+    <CartContext.Provider value={{ cart, cartTotal, cartItemCount, addToCart, removeFromCart, updateQuantity, clearCart, setTableCode, deviceSessionId }}>
       {children}
-    </CartContext.Provider>
+   </CartContext.Provider>
   );
 }
 

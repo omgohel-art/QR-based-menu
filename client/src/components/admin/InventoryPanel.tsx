@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,6 +103,13 @@ const emptyForm = {
   lastRestockedAt: "", expiryDate: "", notes: "",
 };
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+  return headers;
+}
+
 export default function InventoryPanel() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("items");
@@ -148,7 +156,7 @@ export default function InventoryPanel() {
       if (filterStatus) params.set("status", filterStatus);
       params.set("page", page.toString());
       params.set("limit", "50");
-      const r = await fetch(`/api/inventory/items?${params}`);
+      const r = await fetch(`/api/inventory/items?${params}`, { headers: await authHeaders() });
       if (!r.ok) throw new Error("Failed to load items");
       return r.json();
     },
@@ -177,7 +185,7 @@ export default function InventoryPanel() {
       const body = { ...data, currentStock: data.currentStock || "0", minimumStock: data.minimumStock || "0", maximumStock: data.maximumStock || "0", purchasePrice: data.purchasePrice || "0" };
       const url = editingItem ? `/api/inventory/items/${editingItem.id}` : "/api/inventory/items";
       const method = editingItem ? "PUT" : "POST";
-      const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method, headers: await authHeaders(), body: JSON.stringify(body) });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
         throw new Error(err.error || "Failed to save item");
@@ -200,7 +208,7 @@ export default function InventoryPanel() {
       if (!adjustItem || !adjustQty) throw new Error("Missing data");
       const r = await fetch("/api/inventory/adjust", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ itemId: adjustItem.id, action: adjustAction, quantity: adjustQty, reason: adjustReason }),
       });
       if (!r.ok) {
@@ -222,7 +230,7 @@ export default function InventoryPanel() {
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const r = await fetch(`/api/inventory/items/${id}`, { method: "DELETE" });
+      const r = await fetch(`/api/inventory/items/${id}`, { method: "DELETE", headers: await authHeaders() });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
         throw new Error(err.error || "Failed to delete item");

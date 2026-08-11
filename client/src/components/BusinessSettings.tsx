@@ -54,6 +54,15 @@ type BusinessData = {
   serviceChargePercentage: number;
   notifEnabled: boolean;
   reservationEnabled: boolean;
+  // GST invoice compliance
+  panNumber: string | null;
+  stateCode: string | null;
+  sacCode: string | null;
+  placeOfSupply: string | null;
+  isInterState: boolean;
+  cgstRate: number;
+  sgstRate: number;
+  igstRate: number;
 };
 
 export default function BusinessSettings() {
@@ -101,6 +110,15 @@ export default function BusinessSettings() {
     serviceChargePercentage: 0,
     notifEnabled: true,
     reservationEnabled: false,
+    // GST invoice compliance
+    panNumber: "",
+    stateCode: "",
+    sacCode: "",
+    placeOfSupply: "",
+    isInterState: false,
+    cgstRate: 9,
+    sgstRate: 9,
+    igstRate: 18,
   });
 
   const [gstError, setGstError] = useState("");
@@ -133,6 +151,14 @@ export default function BusinessSettings() {
         serviceChargePercentage: settings.serviceChargePercentage ?? 0,
         notifEnabled: settings.notifEnabled ?? true,
         reservationEnabled: settings.reservationEnabled ?? false,
+        panNumber: settings.panNumber || "",
+        stateCode: settings.stateCode || "",
+        sacCode: settings.sacCode || "",
+        placeOfSupply: settings.placeOfSupply || "",
+        isInterState: settings.isInterState ?? false,
+        cgstRate: settings.cgstRate ?? 9,
+        sgstRate: settings.sgstRate ?? 9,
+        igstRate: settings.igstRate ?? 18,
       });
     }
   }, [settings]);
@@ -177,6 +203,14 @@ export default function BusinessSettings() {
         serviceChargePercentage: form.serviceChargePercentage,
         notifEnabled: form.notifEnabled,
         reservationEnabled: form.reservationEnabled,
+        panNumber: form.panNumber.trim().toUpperCase() || null,
+        stateCode: form.stateCode.trim() || null,
+        sacCode: form.sacCode.trim() || null,
+        placeOfSupply: form.placeOfSupply.trim() || null,
+        isInterState: form.isInterState,
+        cgstRate: form.cgstRate,
+        sgstRate: form.sgstRate,
+        igstRate: form.igstRate,
         updatedAt: new Date().toISOString(),
       };
       if (!payload.restaurantName) throw new Error("Restaurant Name is required");
@@ -372,9 +406,66 @@ export default function BusinessSettings() {
             {form.gstEnabled && (
               <p className="text-xs text-slate-500">
                 CGST: {cgst}% &middot; SGST: {sgst}%
-              </p>
+             </p>
             )}
-          </div>
+         </div>
+          <div className="space-y-2">
+            <Label>PAN Number</Label>
+            <Input
+              value={form.panNumber}
+              onChange={(e) => updateField("panNumber", e.target.value.toUpperCase())}
+              placeholder="ABCDE1234F"
+              maxLength={10}
+            />
+            <p className="text-xs text-slate-500">Required for GST-registered businesses</p>
+         </div>
+          <div className="space-y-2">
+            <Label>State Code</Label>
+            <Input
+              value={form.stateCode}
+              onChange={(e) => updateField("stateCode", e.target.value.replace(/\D/g, "").slice(0, 2))}
+              placeholder="24 (Gujarat)"
+              maxLength={2}
+            />
+            <p className="text-xs text-slate-500">2-digit GST state code for Place of Supply</p>
+         </div>
+          <div className="space-y-2">
+            <Label>Place of Supply</Label>
+            <Input
+              value={form.placeOfSupply}
+              onChange={(e) => updateField("placeOfSupply", e.target.value)}
+              placeholder="Maharashtra"
+            />
+         </div>
+          <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg">
+            <div>
+              <Label className="text-base font-medium">Inter-State Supply</Label>
+              <p className="text-sm text-slate-500 mt-0.5">
+                {form.isInterState ? "IGST will be applied instead of CGST + SGST" : "CGST + SGST will be applied"}
+             </p>
+           </div>
+            <button
+              type="button"
+              onClick={() => updateField("isInterState", !form.isInterState)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                form.isInterState ? "bg-emerald-500" : "bg-slate-300"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                form.isInterState ? "translate-x-6" : "translate-x-1"
+              }`} />
+           </button>
+         </div>
+          <div className="space-y-2">
+            <Label>SAC Code (for Service Charge</Label>
+            <Input
+              value={form.sacCode}
+              onChange={(e) => updateField("sacCode", e.target.value)}
+              placeholder="996331"
+              maxLength={8}
+            />
+            <p className="text-xs text-slate-500">Service Accounting Code — e.g. 996331 for restaurant service</p>
+         </div>
           <div className="space-y-2">
             <Label>Service Charge (%)</Label>
             <Input

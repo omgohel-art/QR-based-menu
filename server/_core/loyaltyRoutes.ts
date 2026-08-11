@@ -16,6 +16,7 @@ import {
   getMilestoneStatus,
   redeemMilestone,
 } from "./loyaltyService";
+import { getUserIdFromToken, fetchUserProfileByAuthId } from "./authRoutes";
 
 const router = Router();
 
@@ -28,7 +29,7 @@ function sb() {
 }
 
 async function ensureWallet(phone: string, name?: string) {
-  const client = sb()!;
+  const client = sb() as any;
   const { data: existing } = await client.from("loyaltyWallets").select("*").eq("customerPhone", phone).single();
   if (existing) return existing;
   const { data: created } = await client.from("loyaltyWallets").insert({
@@ -60,7 +61,7 @@ router.post("/api/loyalty/earn", async (req: Request, res: Response) => {
 // GET /api/loyalty/wallet/:phone
 router.get("/api/loyalty/wallet/:phone", async (req: Request, res: Response) => {
   try {
-    const client = sb()!;
+    const client = sb() as any;
     const phone = req.params.phone;
     const wallet = await ensureWallet(phone);
 
@@ -196,7 +197,7 @@ router.post("/api/loyalty/redeem-milestone", async (req: Request, res: Response)
 // GET /api/loyalty/milestone-config
 router.get("/api/loyalty/milestone-config", async (_req: Request, res: Response) => {
   try {
-    const client = sb()!;
+    const client = sb() as any;
     const { data } = await client.from("businessSettings").select("milestoneConfig").single();
     res.json(data?.milestoneConfig || [
       { points: 50, spins: 1, couponPercent: 5, enabled: true },
@@ -216,7 +217,7 @@ router.put("/api/loyalty/milestone-config", async (req: Request, res: Response) 
     if (!config || !Array.isArray(config)) {
       return res.status(400).json({ error: "config array is required" });
     }
-    const client = sb()!;
+    const client = sb() as any;
     await client.from("businessSettings").update({ milestoneConfig: config }).eq("id", 1);
     res.json({ success: true });
   } catch (err: any) {
@@ -227,10 +228,26 @@ router.put("/api/loyalty/milestone-config", async (req: Request, res: Response) 
 
 // ============ ADMIN COUPON MANAGEMENT ============
 
+// Bug 10 fix: gate all /api/loyalty/admin/* endpoints behind admin role check.
+async function requireLoyaltyAdmin(req: Request, res: Response): Promise<boolean> {
+  const userId = getUserIdFromToken(req);
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required" });
+    return false;
+  }
+  const profile = await fetchUserProfileByAuthId(userId).catch(() => null);
+  if (!profile || profile.role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return false;
+  }
+  return true;
+}
+
 // GET /api/loyalty/admin/wallets
-router.get("/api/loyalty/admin/wallets", async (_req: Request, res: Response) => {
+router.get("/api/loyalty/admin/wallets", async (req: Request, res: Response) => {
   try {
-    const client = sb()!;
+    if (!(await requireLoyaltyAdmin(req, res))) return;
+    const client = sb() as any;
     const { data: wallets } = await client.from("loyaltyWallets").select("*").order("currentPoints", { ascending: false });
     res.json(wallets || []);
   } catch (err: any) {
@@ -240,8 +257,9 @@ router.get("/api/loyalty/admin/wallets", async (_req: Request, res: Response) =>
 });
 
 // GET /api/loyalty/admin/coupons — all coupons with customer info
-router.get("/api/loyalty/admin/coupons", async (_req: Request, res: Response) => {
+router.get("/api/loyalty/admin/coupons", async (req: Request, res: Response) => {
   try {
+    if (!(await requireLoyaltyAdmin(req, res))) return;
     const coupons = await getAllCoupons();
     res.json(coupons);
   } catch (err: any) {
@@ -253,12 +271,16 @@ router.get("/api/loyalty/admin/coupons", async (_req: Request, res: Response) =>
 // POST /api/loyalty/admin/adjust
 router.post("/api/loyalty/admin/adjust", async (req: Request, res: Response) => {
   try {
+    if (!(await requireLoyaltyAdmin(req, res))) return;
     const { customerPhone, points, reason } = req.body;
     if (!customerPhone || points === undefined) {
       return res.status(400).json({ error: "customerPhone and points are required" });
     }
+    if (typeof points !== "number" || !Number.isFinite(points)) {
+      return res.status(400).json({ error: "points must be a finite number" });
+    }
     const wallet = await ensureWallet(customerPhone);
-    const client = sb()!;
+    const client = sb() as any;
     await client.from("loyaltyWallets").update({
       currentPoints: Math.max(0, wallet.currentPoints + points),
       lifetimeEarned: points > 0 ? wallet.lifetimeEarned + points : wallet.lifetimeEarned,
@@ -283,6 +305,7 @@ router.post("/api/loyalty/admin/adjust", async (req: Request, res: Response) => 
 // PATCH /api/loyalty/admin/coupons/:id/deactivate
 router.patch("/api/loyalty/admin/coupons/:id/deactivate", async (req: Request, res: Response) => {
   try {
+    if (!(await requireLoyaltyAdmin(req, res))) return;
     await deactivateCoupon(parseInt(req.params.id));
     res.json({ success: true });
   } catch (err: any) {
@@ -294,6 +317,7 @@ router.patch("/api/loyalty/admin/coupons/:id/deactivate", async (req: Request, r
 // PATCH /api/loyalty/admin/coupons/:id/expire
 router.patch("/api/loyalty/admin/coupons/:id/expire", async (req: Request, res: Response) => {
   try {
+    if (!(await requireLoyaltyAdmin(req, res))) return;
     await forceExpireCoupon(parseInt(req.params.id));
     res.json({ success: true });
   } catch (err: any) {
@@ -303,8 +327,9 @@ router.patch("/api/loyalty/admin/coupons/:id/expire", async (req: Request, res: 
 });
 
 // POST /api/loyalty/admin/expire-all — expire all overdue coupons
-router.post("/api/loyalty/admin/expire-all", async (_req: Request, res: Response) => {
+router.post("/api/loyalty/admin/expire-all", async (req: Request, res: Response) => {
   try {
+    if (!(await requireLoyaltyAdmin(req, res))) return;
     const count = await expireCoupons();
     res.json({ expired: count });
   } catch (err: any) {

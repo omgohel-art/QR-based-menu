@@ -324,6 +324,18 @@ export async function settleSession(
       ${finalTotal.toString()}, ${session.customerName || null}, ${session.customerPhone || null},
       ${settledBy}, NOW())
   `);
+
+  // Increment sequential invoice counter for GST compliance
+  try {
+    await db.execute(sql`
+      UPDATE "businessSettings"
+      SET "invoiceCounter" = COALESCE("invoiceCounter", 0) + 1,
+          "updatedAt" = NOW()
+      WHERE id = (SELECT id FROM "businessSettings" ORDER BY id ASC LIMIT 1)
+    `);
+  } catch (err) {
+    console.warn("[Settle Session] Invoice counter increment failed:", (err as Error).message);
+  }
 }
 
 export async function getInactiveSessionsForFlagging(inactivityWindowMinutes: number): Promise<Session[]> {

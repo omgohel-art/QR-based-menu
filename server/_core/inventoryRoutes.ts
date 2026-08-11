@@ -7,8 +7,23 @@ import { getUserIdFromToken } from "./authRoutes";
 const router = Router();
 
 async function requireAdmin(req: Request, res: Response): Promise<string | null> {
-  const userId = getUserIdFromToken(req);
-  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return null; }
+  // First sync check (covers HS256 + populates pending fields for ES256/RSA).
+  let userId = getUserIdFromToken(req);
+  if (!userId) {
+    console.warn(`[inventory auth] no userId from token for ${req.method} ${req.path} - has auth header: ${!!req.headers.authorization}`);
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  // For ES256/RSA tokens, sync path skipped signature verification; do it now.
+  if ((req as any)._pendingJwtAlg) {
+    const { verifyJwtAsync } = await import("./authRoutes");
+    const verified = await verifyJwtAsync(req);
+    if (!verified) {
+      console.warn(`[inventory auth] JWT signature verification failed for ${req.method} ${req.path}`);
+      res.status(401).json({ error: "Unauthorized" });
+      return null;
+    }
+  }
   try {
     const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
     const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
@@ -16,12 +31,14 @@ async function requireAdmin(req: Request, res: Response): Promise<string | null>
       headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` },
     });
     const profiles = await r.json();
-    if (!profiles?.[0] || profiles[0].role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
+    if (!profiles?.[0] || !["admin", "staff"].includes(profiles[0].role)) {
+      console.warn(`[inventory auth] userId=${userId} has no admin/staff profile (got: ${JSON.stringify(profiles?.[0] || {})})`);
+      res.status(403).json({ error: "Admin or staff access required" });
       return null;
     }
     return userId;
-  } catch {
+  } catch (err) {
+    console.error("[inventory auth] profile fetch failed:", err);
     res.status(500).json({ error: "Internal server error" });
     return null;
   }
@@ -194,6 +211,7 @@ router.get("/api/inventory/items/:id", async (req: Request, res: Response) => {
  */
 router.post("/api/inventory/items", async (req: Request, res: Response) => {
   try {
+    console.log(`[inventory POST /items] body.name="${req.body?.name}" authHeader=${req.headers.authorization ? req.headers.authorization.substring(0, 20) + "..." : "MISSING"}`);
     const userId = await requireAdmin(req, res);
     if (!userId) return;
 

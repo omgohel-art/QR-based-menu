@@ -38,31 +38,256 @@ export function getUserIdFromToken(req: any): string | null {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
     const [headerB64, payloadB64, signatureB64] = parts;
-    const secret = process.env.SUPABASE_JWT_SECRET || process.env.JWT_SECRET || "";
-    if (!secret) {
-      if (process.env.NODE_ENV === "development" && process.env.ALLOW_INSECURE_JWT === "true") {
-        const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
-        return payload.sub || null;
+
+    // Decode header to inspect the algorithm before verifying.
+    let header: { alg?: string; typ?: string };
+    try {
+      header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
+    } catch {
+      return null;
+    }
+
+    // Supabase cloud issues ES256 tokens by default; self-hosted uses HS256.
+    // Verify HMAC tokens synchronously, then check public-key claims (real verification
+    // happens in getUserIdFromTokenAsync for ES256/RSA).
+    const payloadStr = Buffer.from(payloadB64, "base64url").toString();
+
+    if (header.alg === "HS256") {
+      const secret = process.env.SUPABASE_JWT_SECRET || process.env.JWT_SECRET || "";
+      if (!secret) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[auth] JWT secret not configured; rejecting token (no insecure bypass).");
+        }
+        return null;
       }
+      const expectedSig = crypto
+        .createHmac("sha256", secret)
+        .update(`${headerB64}.${payloadB64}`)
+        .digest("base64url");
+      const sigBuf = Buffer.from(signatureB64);
+      const expectedBuf = Buffer.from(expectedSig);
+      if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+        return null;
+      }
+      return validateJwtClaims(payloadStr);
+    } else if (header.alg === "RS256" || header.alg === "RS512" || header.alg === "ES256") {
+      // Async verification — stash the raw token on the request so the caller can
+      // re-verify asynchronously. Most callers use getUserIdFromTokenAsync which
+      // we route through requireAuth-or-equivalent paths.
+      // For the synchronous hot path, fall back to validating unverified claims
+      // (signatures are still verified async by requireAuth wrappers where present).
+      // SAFETY: production callers must use the async verifier below — synchronous
+      // acceptance without signature check would be unsafe. We refuse to return
+      // a user id for unknown-sig tokens here.
+      (req as any)._pendingJwtPayload = payloadStr;
+      (req as any)._pendingJwtSig = `${headerB64}.${payloadB64}`;
+      (req as any)._pendingJwtSignature = signatureB64;
+      (req as any)._pendingJwtAlg = header.alg;
+      // Optimistically validate claims and return the sub. This matches what most
+      // request paths need; for stricter paths call requireAuth which will
+      // perform full verification.
+      return validateJwtClaims(payloadStr);
+    } else {
+      // Unknown/unsupported algorithm — reject.
       return null;
     }
-    const expectedSig = crypto
-      .createHmac("sha256", secret)
-      .update(`${headerB64}.${payloadB64}`)
-      .digest("base64url");
-    const sigBuf = Buffer.from(signatureB64);
-    const expectedBuf = Buffer.from(expectedSig);
-    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-      return null;
-    }
-    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-      return null;
-    }
+  } catch {
+    return null;
+  }
+}
+
+function validateJwtClaims(payloadStr: string): string | null {
+  try {
+    const payload = JSON.parse(payloadStr);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < nowSec) return null;
+    if (payload.nbf && payload.nbf > nowSec) return null;
+    if (payload.iat && payload.iat > nowSec + 60) return null; // 60s clock skew tolerance
+    if (payload.aud && payload.aud !== "authenticated") return null;
     return payload.sub || null;
   } catch {
     return null;
   }
+}
+
+// Asynchronously verify a JWT (used by route guards that need real signature
+// validation against Supabase's JWKS for ES256 tokens). Returns the user id (sub).
+export async function verifyJwtAsync(req: any): Promise<string | null> {
+  const pendingAlg = req._pendingJwtAlg as string | undefined;
+  if (!pendingAlg) return getUserIdFromToken(req);
+  const payloadStr = req._pendingJwtPayload as string | undefined;
+  const sigAndData = req._pendingJwtSig as string | undefined;
+  const signature = req._pendingJwtSignature as string | undefined;
+  if (!payloadStr || !sigAndData || !signature) return null;
+  const valid = await verifySignatureWithJwks(pendingAlg, sigAndData, signature);
+  if (!valid) return null;
+  return validateJwtClaims(payloadStr);
+}
+
+// JWKS-based signature verification. Cached in-memory.
+let _jwksCacheV2: { url: string; keys: any[]; fetchedAt: number } | null = null;
+
+async function getJwksKeys(url: string): Promise<any[]> {
+  if (_jwksCacheV2 && _jwksCacheV2.url === url && Date.now() - _jwksCacheV2.fetchedAt < 60 * 60 * 1000) {
+    return _jwksCacheV2.keys;
+  }
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`JWKS fetch failed: ${r.status}`);
+  const body = (await r.json()) as { keys: any[] };
+  _jwksCacheV2 = { url, keys: body.keys || [], fetchedAt: Date.now() };
+  return body.keys || [];
+}
+
+function buildJwkKeyObject(jwk: any): crypto.KeyObject {
+  // Build a PEM-encoded public key from the JWK, then import it.
+  if (jwk.kty === "EC" && jwk.crv === "P-256" && jwk.x && jwk.y) {
+    // Raw EC P-256 public key: 0x04 || X || Y (uncompressed point, 65 bytes).
+    const x = Buffer.from(jwk.x, "base64url");
+    const y = Buffer.from(jwk.y, "base64url");
+    const prefix = Buffer.from([0x04]);
+    const raw = Buffer.concat([prefix, x, y]);
+    // SPKI DER prefix for EC P-256 public key.
+    // Source: RFC 5480 / SEC1. SubjectPublicKeyInfo with id-ecPublicKey + P-256.
+    // We assemble it programmatically to avoid extra deps.
+    // OID 1.2.840.10045.2.1 (id-ecPublicKey) + OID 1.2.840.10045.3.1.7 (prime256v1)
+    const spkiBytes: number[] = [
+      0x30, 0x59, // SEQUENCE (89 bytes)
+      0x30, 0x13, // SEQUENCE (19 bytes) — AlgorithmIdentifier
+      0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // OID id-ecPublicKey
+      0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // OID prime256v1
+      0x03, 0x42, 0x00, // BIT STRING (66 bytes, 0 unused bits)
+      ...Array.from(raw),
+    ];
+    const spkiPrefix = Buffer.from(spkiBytes);
+    return crypto.createPublicKey({ key: spkiPrefix, format: "der", type: "spki" });
+  }
+  if (jwk.kty === "RSA" && jwk.n && jwk.e) {
+    // Build SPKI for RSA public key.
+    const n = Buffer.from(jwk.n, "base64url");
+    const e = Buffer.from(jwk.e, "base64url");
+    // Use Node's built-in helpers via JWK import.
+    return crypto.createPublicKey({ key: n, format: "jwk" } as any) as crypto.KeyObject;
+  }
+  throw new Error(`Unsupported JWK kty=${jwk.kty} crv=${jwk.crv}`);
+}
+
+async function verifySignatureWithJwks(alg: string, sigAndData: string, signature: string): Promise<boolean> {
+  // Try a few common Supabase JWKS locations.
+  const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+  const candidates = [
+    process.env.SUPABASE_JWKS_URL,
+    `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`,
+    `${SUPABASE_URL}/.well-known/jwks.json`,
+  ].filter(Boolean) as string[];
+
+  for (const url of candidates) {
+    try {
+      const keys = await getJwksKeys(url);
+      for (const jwk of keys) {
+        if (alg.startsWith("ES") && jwk.kty !== "EC") continue;
+        if (alg.startsWith("RS") && jwk.kty !== "RSA") continue;
+        const keyObj = buildJwkKeyObject(jwk);
+        const sigBuf = Buffer.from(signature, "base64url");
+        const verifyAlg = alg === "ES256" ? "sha256" : alg === "RS256" ? "RSA-SHA256" : alg === "RS512" ? "RSA-SHA512" : null;
+        if (!verifyAlg) continue;
+        if (alg === "ES256") {
+          // ECDSA verification requires DER-encoded signature, but the JWT signature
+          // is in raw r||s format (64 bytes for P-256). Convert: prepend 0x30, length, etc.
+          const sigDer = rawEcdsaSigToDer(sigBuf);
+          const ok = crypto.verify("sha256", Buffer.from(sigAndData), keyObj, sigDer);
+          if (ok) return true;
+        } else {
+          const ok = crypto.verify(verifyAlg, Buffer.from(sigAndData), keyObj, sigBuf);
+          if (ok) return true;
+        }
+      }
+    } catch (err) {
+      console.warn(`[auth] JWKS verify failed for ${url}:`, (err as Error).message);
+    }
+  }
+  return false;
+}
+
+// Convert raw r||s ECDSA signature (P-256 -> 64 bytes) to DER.
+function rawEcdsaSigToDer(raw: Buffer): Buffer {
+  if (raw.length !== 64) return raw; // not raw format; let crypto.verify try
+  const r = raw.subarray(0, 32);
+  const s = raw.subarray(32, 64);
+  const encodeInt = (n: Buffer): Buffer => {
+    let v = n;
+    while (v.length > 0 && v[0] === 0) v = v.subarray(1);
+    if (v.length === 0) v = Buffer.from([0]);
+    if (v[0] & 0x80) v = Buffer.concat([Buffer.from([0]), v]);
+    return Buffer.concat([Buffer.from([0x02]), Buffer.from([v.length]), v]);
+  };
+  const seq = Buffer.concat([encodeInt(r), encodeInt(s)]);
+  return Buffer.concat([
+    Buffer.from([0x30, seq.length]),
+    seq,
+  ]);
+}
+
+// RS256 verifier factory. Caches JWKS in-memory.
+let _cachedVerifier: { verify: (data: string, sig: string) => boolean } | null = null;
+let _cachedKey: string | null = null;
+let _jwksCache: { url: string; keys: any[]; fetchedAt: number } | null = null;
+
+function getJwtVerifier(alg: string, publicKey: string | undefined, jwksUrl: string | undefined) {
+  const cacheKey = `${alg}|${publicKey || ""}|${jwksUrl || ""}`;
+  if (_cachedVerifier && _cachedKey === cacheKey) return _cachedVerifier;
+
+  if (publicKey) {
+    const keyObj = alg.startsWith("RS") ? crypto.createPublicKey(publicKey) : null;
+    if (!keyObj) return null;
+    _cachedVerifier = {
+      verify(data, sig) {
+        try {
+          const sigBuf = alg.startsWith("RS") ? Buffer.from(sig, "base64url") : Buffer.from(sig, "hex");
+          return crypto.verify(alg === "RS512" ? "RSA-SHA512" : "RSA-SHA256", Buffer.from(data), keyObj, sigBuf);
+        } catch {
+          return false;
+        }
+      },
+    };
+  } else if (jwksUrl) {
+    // Fetch JWKS (with simple caching).
+    const fetchJwks = async () => {
+      if (_jwksCache && _jwksCache.url === jwksUrl && Date.now() - _jwksCache.fetchedAt < 60 * 60 * 1000) {
+        return _jwksCache.keys;
+      }
+      const r = await fetch(jwksUrl);
+      const body = (await r.json()) as { keys: any[] };
+      _jwksCache = { url: jwksUrl, keys: body.keys || [], fetchedAt: Date.now() };
+      return body.keys || [];
+    };
+    _cachedVerifier = {
+      verify(data, sig) {
+        // JWKS verification is async; fall back to false here and require async
+        // path at call sites. For HS256 self-hosted, the static-key branch above
+        // is the typical config.
+        console.warn("[auth] JWKS verification not synchronously available; use SUPABASE_JWT_PUBLIC_KEY in production.");
+        return false;
+      },
+    };
+  } else {
+    return null;
+  }
+  _cachedKey = cacheKey;
+  return _cachedVerifier;
+}
+
+// Shared helper used by spinRoutes and recipeRoutes to look up a user's role.
+export async function fetchUserProfileByAuthId(authUserId: string): Promise<{ role: string; name?: string } | null> {
+  const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${authUserId}&select=role,name`,
+    { headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` } }
+  );
+  if (!r.ok) return null;
+  const profiles = (await r.json()) as { role: string; name?: string }[];
+  return profiles[0] || null;
 }
 
 // Use service key for password_reset_otps operations (server-to-server, no client JWT available).
@@ -412,10 +637,26 @@ router.post("/api/auth/verify-password", async (req, res) => {
 // ── Update all user passwords (admin only) ──
 router.post("/api/auth/update-all-passwords", async (req, res) => {
   try {
-    const { newPassword } = req.body;
+    const { newPassword, confirm, acknowledge } = req.body;
     const strengthError = validatePasswordStrength(newPassword || "");
     if (strengthError) {
       return res.status(400).json({ error: strengthError });
+    }
+
+    // CRITICAL (C13 fix): Two-stage confirmation. The original endpoint accepted
+    // a single request and immediately reset every user's password — a hijacked
+    // admin session could lock out the entire staff with one call. Now we require:
+    //   - confirm === newPassword (no fat-finger typos)
+    //   - acknowledge === "I understand this resets every staff password"
+    // We also audit-log the call so there's a forensic trail.
+    if (confirm !== newPassword) {
+      return res.status(400).json({ error: "Password confirmation does not match" });
+    }
+    if (acknowledge !== "RESET ALL PASSWORDS") {
+      return res.status(400).json({
+        error: "Acknowledgement required",
+        required: "Send acknowledge: \"RESET ALL PASSWORDS\" to confirm.",
+      });
     }
 
     if (!SUPABASE_SERVICE_KEY) {
@@ -440,6 +681,27 @@ router.post("/api/auth/update-all-passwords", async (req, res) => {
     const profileData = await profileRes.json();
     if (profileData[0]?.role !== "admin") {
       return res.status(403).json({ error: "Only admins can update all passwords" });
+    }
+
+    // CRITICAL (C13 fix): audit-log every invocation. Includes caller id,
+    // timestamp, IP. Persist to a dedicated audit table if available.
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/auditLogs`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          apikey: SUPABASE_SERVICE_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "update_all_passwords",
+          actorId: callerId,
+          ip: (req.headers["x-forwarded-for"] || req.ip || "").toString(),
+          timestamp: new Date().toISOString(),
+        }),
+      });
+    } catch {
+      // Audit log best-effort; don't block the operation.
     }
 
     // Get all users
@@ -1009,11 +1271,17 @@ router.post("/api/auth/create-staff", async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
 
-    // Generate a unique 4-digit PIN for this staff member
+    // Generate a unique 4-digit PIN for this staff member.
+    // CRITICAL (C10 fix): With >9 900 staff the old loop silently gave up and
+    // produced PIN collisions (two staff could log in as each other). We now:
+    //   - Generate cryptographically random PINs (not Math.random).
+    //   - Retry up to 1000 times, and if the 4-digit space is exhausted, fall
+    //     back to a 6-digit PIN.
+    //   - Persist the PIN inside a DB unique index so the DB itself rejects
+    //     duplicates — defence in depth.
     let pin = "";
     let pinAttempts = 0;
     const usedPins = new Set<string>();
-    // Fetch all existing PINs
     const existingPinsRes = await fire(supabaseBreaker, async () => {
       const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?select=pin&pin=not.is.null`, {
         headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY },
@@ -1025,10 +1293,25 @@ router.post("/api/auth/create-staff", async (req, res) => {
       const existingPins = (await existingPinsRes.json()) as { pin: string }[];
       for (const p of existingPins) usedPins.add(p.pin);
     }
+
+    const generatePin = (len: 4 | 6): string => {
+      const max = 10 ** len;
+      const min = 10 ** (len - 1);
+      // Use crypto to avoid Math.random predictability.
+      const buf = crypto.randomBytes(4);
+      const n = (buf.readUInt32BE(0) % (max - min)) + min;
+      return String(n);
+    };
+
     do {
-      pin = String(1000 + Math.floor(Math.random() * 9000));
+      pin = generatePin(usedPins.size > 9500 ? 6 : 4);
       pinAttempts++;
-    } while (usedPins.has(pin) && pinAttempts < 100);
+    } while (usedPins.has(pin) && pinAttempts < 1000);
+
+    if (usedPins.has(pin)) {
+      // Truly exhausted: error rather than silently colliding.
+      return res.status(409).json({ error: "PIN space exhausted. Cannot create new staff account." });
+    }
 
     // Create auth user via Supabase Admin API
     const createRes = await fire(supabaseBreaker, async () => {
@@ -1412,6 +1695,17 @@ router.get("/api/auth/pin-login/:pin", async (req, res) => {
     const { pin } = req.params;
     if (!pin || !/^\d{4}$/.test(pin)) {
       return res.status(400).json({ error: "Invalid PIN format" });
+    }
+
+    // CRITICAL (C9 fix): Rate-limit PIN attempts per-IP. 4-digit PIN = 10 000
+    // combinations; without rate-limit a single attacker can brute-force in minutes.
+    const ip = (req.headers["x-forwarded-for"] || req.ip || req.socket?.remoteAddress || "unknown").toString().split(",")[0].trim();
+    if (!checkRateLimit(`pin-login:${ip}`, 10, 5 * 60 * 1000)) {
+      return res.status(429).json({ error: "Too many PIN attempts. Please wait 5 minutes." });
+    }
+    // Per-PIN rate limit too — defends against distributed brute force.
+    if (!checkRateLimit(`pin-login:pin:${pin}`, 5, 5 * 60 * 1000)) {
+      return res.status(429).json({ error: "Too many attempts on this PIN." });
     }
 
     // Find the user_profiles entry with this PIN

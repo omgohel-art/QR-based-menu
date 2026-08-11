@@ -299,7 +299,6 @@ export default function AdminLoyaltyPanel() {
                     <label className="text-[10px] text-slate-400 mb-0.5 block">Lucky Spins</label>
                     <Input
                       type="number"
-                      size="sm"
                       value={milestone.spins}
                       onChange={(e) => {
                         const newConfig = [...milestoneConfig];
@@ -313,7 +312,6 @@ export default function AdminLoyaltyPanel() {
                     <label className="text-[10px] text-slate-400 mb-0.5 block">Coupon Discount %</label>
                     <Input
                       type="number"
-                      size="sm"
                       value={milestone.couponPercent}
                       onChange={(e) => {
                         const newConfig = [...milestoneConfig];

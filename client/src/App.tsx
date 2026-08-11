@@ -12,6 +12,7 @@ import { NotificationProvider } from "./contexts/NotificationContext";
 import { NetworkStatusProvider } from "./contexts/NetworkStatusContext";
 import { StaffLanguageProvider } from "./contexts/StaffLanguageContext";
 import OfflineBanner from "./components/OfflineBanner";
+import OfflineOrderBanner from "./components/admin/OfflineOrderBanner";
 import NotificationToastQueue from "./components/notifications/NotificationToast";
 import Login from "./pages/Login";
 import ForceChangePassword from "./pages/ForceChangePassword";
@@ -131,11 +132,12 @@ function App() {
                 <SoundSettingsProvider>
                   <CartProvider>
                     <OfflineBanner />
+                    <OfflineOrderBanner />
                     <RealtimeSubscriptions />
                     <NotificationToastQueue />
                     <Toaster />
                     <Router />
-                  </CartProvider>
+                 </CartProvider>
                 </SoundSettingsProvider>
               </NotificationProvider>
             </NetworkStatusProvider>

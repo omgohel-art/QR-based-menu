@@ -8,6 +8,7 @@ import { ArrowLeft, Lock, Shield, CreditCard, WifiOff } from "lucide-react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useDoubleSubmitGuard } from "@/hooks/useDoubleSubmitGuard";
 import {
   createRazorpayOrder,
   openRazorpayCheckout,
@@ -57,6 +58,9 @@ export default function PaymentPage() {
   const { isOffline } = useNetworkStatus();
   const [paymentState, setPaymentState] = useState<PaymentState | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  // CRITICAL (C23 fix): ref-based guard catches double-taps that slip through
+  // the React state-flip window before isProcessing becomes true.
+  const submitGuard = useDoubleSubmitGuard();
   const [sdkLoaded, setSdkLoaded] = useState(false);
   const [checked, setChecked] = useState(false);
   const { fmtPrice } = useFormatCurrency();
@@ -98,7 +102,23 @@ export default function PaymentPage() {
       toast.error("No Internet", { description: "Online payment requires an internet connection. Please reconnect and try again." });
       return;
     }
+    // CRITICAL (C23 fix): prevent double-clicks from issuing two Razorpay
+    // orders in the gap before isProcessing flips.
+    if (submitGuard.isPending() || isProcessing) {
+      return;
+    }
+    return submitGuard.run(async () => {
+      await doRazorpayPayment();
+    });
+  };
+
+  async function doRazorpayPayment() {
     setIsProcessing(true);
+    // paymentState is checked non-null in handleRazorpayPayment before this is called.
+    if (!paymentState || !tableCode) {
+      setIsProcessing(false);
+      return;
+    }
 
     try {
       const orderData = await createRazorpayOrder(paymentState.finalTotal);
@@ -165,7 +185,7 @@ export default function PaymentPage() {
       toast.error(err.message || "Failed to initialize payment");
       setIsProcessing(false);
     }
-  };
+  }
 
   if (!tableCode) {
     return (

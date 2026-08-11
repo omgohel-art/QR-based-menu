@@ -88,7 +88,7 @@ export default function RevenueAnalytics() {
         <StatCard label="Today's Revenue" value={formatINR(data?.todayRevenue || 0)} icon={<IndianRupee className="w-4 h-4" />} color="green" sub={formatPct(data?.growthPercent || 0)} />
         <StatCard label="Yesterday" value={formatINR(data?.yesterdayRevenue || 0)} icon={<TrendingDown className="w-4 h-4" />} color="slate" />
         <StatCard label="Total Revenue" value={formatINR(data?.totalRevenue || 0)} icon={<BarChart3 className="w-4 h-4" />} color="blue" sub={`${data?.totalBills || 0} bills`} />
-        <StatCard label="Growth" value={formatPct(data?.growthPercent || 0)} icon={<TrendingUp className="w-4 h-4" />} color={data?.growthPercent >= 0 ? "green" : "red"} />
+        <StatCard label="Growth" value={formatPct(data?.growthPercent || 0)} icon={<TrendingUp className="w-4 h-4" />} color={(data?.growthPercent ?? 0) >= 0 ? "green" : "red"} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -143,7 +143,7 @@ export default function RevenueAnalytics() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Highest Bill" value={formatINR(data?.highestBill || 0)} icon={<TrendingUp className="w-4 h-4" />} color="amber" />
         <StatCard label="Lowest Bill" value={formatINR(data?.lowestBill || 0)} icon={<TrendingDown className="w-4 h-4" />} color="slate" />
-        <StatCard label="Avg Bill" value={formatINR(data?.totalBills > 0 ? (data?.totalRevenue || 0) / data.totalBills : 0)} color="purple" />
+        <StatCard label="Avg Bill" value={formatINR((data?.totalBills ?? 0) > 0 ? (data?.totalRevenue || 0) / (data?.totalBills || 1) : 0)} color="purple" />
         <StatCard label="Total Bills" value={data?.totalBills || 0} color="blue" />
       </div>
     </AnalyticsDrillDown>

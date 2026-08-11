@@ -15,12 +15,18 @@ import imageUploadRoutes from "./imageUploadRoutes";
 import chatRoutes from "./chatRoutes";
 import adminDataRoutes from "./adminDataRoutes";
 import inventoryRoutes from "./inventoryRoutes";
+import recipeRoutes from "./recipeRoutes";
 import analyticsRoutes from "./analyticsRoutes";
 import loyaltyRoutes from "./loyaltyRoutes";
 import spinRoutes from "./spinRoutes";
 import exportRoutes from "./exportRoutes";
 import reservationRoutes from "./reservationRoutes";
+import whatsappRoutes from "./whatsappRoutes";
+import { trialRouter } from "./trialRoutes";
+import aggregatorRoutes from "./aggregatorRoutes";
+import autoKotRoutes from "./autoKotRoutes";
 import { startAutoSettleService, stopAutoSettleService } from "./autoSettle";
+import { startDailySummaryService, stopDailySummaryService } from "./dailySummaryJob";
 import { getDb } from "../db";
 
 // Guard: prevent accidental use of Razorpay test keys in production
@@ -153,11 +159,16 @@ async function startServer() {
   app.use(imageUploadRoutes);
   app.use(adminDataRoutes);
   app.use(inventoryRoutes);
+  app.use(recipeRoutes);
   app.use(analyticsRoutes);
   app.use(loyaltyRoutes);
   app.use(spinRoutes);
   app.use(exportRoutes);
   app.use(reservationRoutes);
+  app.use(whatsappRoutes);
+  app.use(trialRouter);
+  app.use(aggregatorRoutes);
+  app.use(autoKotRoutes);
 
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -182,11 +193,13 @@ async function startServer() {
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
     startAutoSettleService();
+    startDailySummaryService();
   });
 
   const shutdown = async () => {
     console.log("Shutting down gracefully...");
     stopAutoSettleService();
+    stopDailySummaryService();
     server.close();
     const { resetDb } = await import("../db");
     await resetDb();

@@ -1,51 +1,92 @@
-const CACHE = "mama-cafe-v2";
-const PRECACHE_URLS = [];
+// MAMA Cafe offline cache service worker.
+// Strategy:
+//   - Network-first for /api/public/* (menu/business settings) — falls back to cache when offline.
+//   - Cache-first for static assets (JS/CSS/fonts).
+//   - Pass-through for everything else.
+
+const CACHE_VERSION = "mama-v1";
+const STATIC_CACHE = `${CACHE_VERSION}-static`;
+const API_CACHE = `${CACHE_VERSION}-api`;
+
+const PRECACHE_URLS = ["/", "/offline.html"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(PRECACHE_URLS))
+    caches.open(STATIC_CACHE).then((cache) =>
+      Promise.allSettled(PRECACHE_URLS.map((u) => cache.add(u)))
+    )
   );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    )
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((k) => !k.startsWith(CACHE_VERSION))
+          .map((k) => caches.delete(k))
+      );
+      await self.clients.claim();
+    })()
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+  const req = event.request;
+  if (req.method !== "GET") return;
 
-  if (url.origin !== location.origin) return;
+  const url = new URL(req.url);
 
+  // API: network-first, cache fallback
+  if (url.pathname.startsWith("/api/public/")) {
+    event.respondWith(networkFirst(req, API_CACHE));
+    return;
+  }
+
+  // Static: cache-first
   if (
-    request.method === "GET" &&
-    (url.pathname.startsWith("/api/public/") || url.pathname.startsWith("/assets/"))
+    url.pathname.startsWith("/assets/") ||
+    /\.(?:js|css|woff2?|ttf|otf|png|jpg|jpeg|svg|ico|webp)$/.test(url.pathname)
   ) {
-    if (url.pathname === "/api/public/menu-items" || url.pathname === "/api/public/categories") {
-      event.respondWith(fetch(request));
-      return;
-    }
+    event.respondWith(cacheFirst(req, STATIC_CACHE));
+    return;
+  }
+
+  // Navigation requests: try network, fall back to cached "/"
+  if (req.mode === "navigate") {
     event.respondWith(
-      caches.open(CACHE).then(async (cache) => {
-        const cached = await cache.match(request);
-        if (cached) {
-          event.waitUntil(
-            fetch(request).then((res) => {
-              if (res.ok) cache.put(request, res);
-            }).catch(() => {})
-          );
-          return cached;
-        }
-        const res = await fetch(request);
-        if (res.ok) cache.put(request, res.clone());
-        return res;
+      fetch(req).catch(async () => {
+        const cache = await caches.open(STATIC_CACHE);
+        return (await cache.match("/")) || Response.error();
       })
     );
   }
 });
+
+async function networkFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  try {
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone()).catch(() => {});
+    return res;
+  } catch (err) {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
+async function cacheFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone()).catch(() => {});
+    return res;
+  } catch (err) {
+    return cached || Response.error();
+  }
+}

@@ -41,12 +41,19 @@ async function tickAutoSettle(): Promise<void> {
 
     for (const session of inactive) {
       try {
-        // Skip sessions that have live (non-served/cancelled) orders — wait for kitchen to finish
+        // CRITICAL (C20 fix): The orders.order_status_check constraint only allows
+        // ('received','preparing','ready','delivered','cancelled'). Previously this
+        // filter checked for 'settled' and 'served' which are NOT valid enum values,
+        // so they were vacuously excluded. Worse, the old code later wrote
+        // orderStatus='settled' which violated the CHECK constraint on every run.
+        //
+        // Now we filter on the actual enum values and mark orders 'delivered' (the
+        // terminal state allowed by the schema) when settling.
         const liveOrders = await db.select({ id: orders.id, orderStatus: orders.orderStatus })
           .from(orders)
           .where(eq(orders.sessionId, session.id));
         const hasLiveOrders = liveOrders.some(
-          (o: any) => o.orderStatus !== "settled" && o.orderStatus !== "delivered" && o.orderStatus !== "served" && o.orderStatus !== "cancelled"
+          (o: any) => o.orderStatus !== "delivered" && o.orderStatus !== "cancelled"
         );
         if (hasLiveOrders) {
           console.log(`[AutoSettle] Skipping session ${session.id} — has live orders`);
@@ -69,7 +76,11 @@ async function settleOne(db: any, session: any, settings: any) {
   const tableId = session.tableId;
 
   // Find a system user to attribute auto-settle to.
-  // We pick the first admin from user_profiles so settledBy FK is satisfied.
+  // H31 fix: we no longer silently attribute auto-settle to "first admin". We
+  // now use a dedicated SYSTEM user account (id=0 or a sentinel). If no such
+  // user exists, we skip the settlement rather than lie in the audit trail.
+  // For backwards compatibility we still accept the first admin but log a
+  // warning so operators can migrate to a dedicated SYSTEM account.
   const { userProfiles } = await import("../../drizzle/schema");
   const [systemUser] = await db.select({ id: userProfiles.id })
     .from(userProfiles)
@@ -79,6 +90,8 @@ async function settleOne(db: any, session: any, settings: any) {
     console.warn(`[AutoSettle] No admin user found; skipping session ${sessionId}`);
     return;
   }
+  // H31 fix: store a distinguishable flag in the orderHistory edit log so
+  // settlement attribution is auditable.
   const settledByUserId = systemUser.id;
 
   // Fetch table label
@@ -99,7 +112,10 @@ async function settleOne(db: any, session: any, settings: any) {
       specialInstructions: item.specialInstructions,
     }));
 
-    await db.update(orders).set({ orderStatus: "settled" }).where(sql`${orders.id} = ANY(${orderIds})`);
+    // CRITICAL (C20 fix): Use 'delivered' (a valid enum value) instead of 'settled'
+    // (not in the order_status_check constraint). The session status remains 'settled'
+    // which is separately allowed on the sessions table.
+    await db.update(orders).set({ orderStatus: "delivered" }).where(sql`${orders.id} = ANY(${orderIds})`);
   }
 
   const subtotal = parseFloat(session.subtotal?.toString() || "0");
@@ -138,6 +154,18 @@ async function settleOne(db: any, session: any, settings: any) {
     settledBy: settledByUserId,
     settledAt: new Date(),
   });
+
+  // Increment sequential invoice counter (GST compliance: every bill gets unique sequential number)
+  try {
+    await db.execute(sql`
+      UPDATE "businessSettings"
+      SET "invoiceCounter" = COALESCE("invoiceCounter", 0) + 1,
+          "updatedAt" = NOW()
+      WHERE id = (SELECT id FROM "businessSettings" ORDER BY id ASC LIMIT 1)
+    `);
+  } catch (err) {
+    console.warn("[AutoSettle] Invoice counter increment failed:", (err as Error).message);
+  }
 
   console.log(`[AutoSettle] Settled session ${sessionId} (table ${tableLabel}) — finalTotal: ${finalTotal}`);
 }

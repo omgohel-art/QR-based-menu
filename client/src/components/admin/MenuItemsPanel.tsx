@@ -25,10 +25,11 @@ export default function MenuItemsPanel() {
     imageUrl: null as string | null,
     foodType: "veg" as string,
     badge: null as string | null,
+    hsnCode: "" as string,
   });
   const [menuSearch, setMenuSearch] = useState("");
   const [editingCategory, setEditingCategory] = useState<{ id: number; name: string } | null>(null);
-  const [editingMenuItem, setEditingMenuItem] = useState<{ id: number; name: string; description: string; price: number; categoryId: number; imageUrl: string | null; foodType: string; badge: string | null } | null>(null);
+  const [editingMenuItem, setEditingMenuItem] = useState<{ id: number; name: string; description: string; price: number; categoryId: number; imageUrl: string | null; foodType: string; badge: string | null; hsnCode: string | null } | null>(null);
   const [managingModifiers, setManagingModifiers] = useState<any | null>(null);
   const [modifierVariants, setModifierVariants] = useState<any[]>([]);
   const [modifierOptions, setModifierOptions] = useState<Record<number, any[]>>({});
@@ -133,11 +134,12 @@ export default function MenuItemsPanel() {
       };
       if (item.imageUrl) payload.imageUrl = item.imageUrl;
       if (item.badge) payload.badge = item.badge;
+      if (item.hsnCode) payload.hsnCode = item.hsnCode.trim();
       const { error } = await supabase.from('menuItems').insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
-      setNewItemData({ categoryId: 0, name: "", description: "", price: 0, imageUrl: null, foodType: "veg", badge: null });
+      setNewItemData({ categoryId: 0, name: "", description: "", price: 0, imageUrl: null, foodType: "veg", badge: null, hsnCode: "" });
       queryClient.invalidateQueries({ queryKey: ['menuItems'] });
       toast.success("Menu item created");
     },
@@ -157,6 +159,7 @@ export default function MenuItemsPanel() {
       else payload.badge = null;
       if (item.imageUrl !== undefined) payload.imageUrl = item.imageUrl;
       if (item.isAvailable !== undefined) payload.isAvailable = item.isAvailable;
+      if (item.hsnCode !== undefined) payload.hsnCode = item.hsnCode ? item.hsnCode.trim() : null;
       const { error } = await supabase.from('menuItems').update(payload).eq('id', item.id);
       if (error) throw error;
     },
@@ -516,6 +519,12 @@ export default function MenuItemsPanel() {
                   value={newItemData.price}
                   onChange={(e) => setNewItemData({ ...newItemData, price: parseFloat(e.target.value) })}
                 />
+                <Input
+                  placeholder="HSN Code (for GST invoice)"
+                  value={newItemData.hsnCode}
+                  onChange={(e) => setNewItemData({ ...newItemData, hsnCode: e.target.value.replace(/\D/g, "").slice(0, 8) })}
+                  maxLength={8}
+                />
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Food Type</label>
@@ -677,7 +686,8 @@ export default function MenuItemsPanel() {
                               categoryId: item.categoryId,
                               imageUrl: item.imageUrl || null,
                               foodType: item.foodType || "veg",
-                              badge: item.badge || null
+                              badge: item.badge || null,
+                              hsnCode: item.hsnCode || null,
                             })}
                           size="sm"
                           variant="ghost"
@@ -805,6 +815,12 @@ export default function MenuItemsPanel() {
                 step="0.01"
                 value={editingMenuItem.price}
                 onChange={(e) => setEditingMenuItem({ ...editingMenuItem, price: parseFloat(e.target.value) })}
+              />
+              <Input
+                placeholder="HSN Code (for GST invoice)"
+                value={editingMenuItem.hsnCode || ""}
+                onChange={(e) => setEditingMenuItem({ ...editingMenuItem, hsnCode: e.target.value.replace(/\D/g, "").slice(0, 8) || null })}
+                maxLength={8}
               />
               <div className="flex gap-3">
                 <div className="flex-1">

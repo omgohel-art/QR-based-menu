@@ -15,15 +15,24 @@ import CallWaiterButton from "@/components/CallWaiterButton";
 import BillSplitModal from "@/components/BillSplitModal";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useLoyalty, useLoyaltyTiers, useSpinStatus, calculatePoints, getNextMilestone, getCurrentTierPoints, type LoyaltyCoupon } from "@/hooks/useLoyalty";
+import { useDoubleSubmitGuard } from "@/hooks/useDoubleSubmitGuard";
 
 export default function CartPage() {
   const [, params] = useRoute("/table/:tableCode/cart");
   const tableCode = params?.tableCode;
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
-  const { cart, cartTotal, cartItemCount, updateQuantity, removeFromCart, clearCart, setTableCode, addToCart } = useCart();
+  const { cart, cartTotal, cartItemCount, updateQuantity, removeFromCart, clearCart, setTableCode, addToCart, deviceSessionId } = useCart();
   const { fmtPrice } = useFormatCurrency();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // CRITICAL (C22 fix): the previous implementation only disabled the button
+  // when `isSubmitting` was true, but the flag was flipped after async work
+  // started — leaving a window where two clicks both queued distinct
+  // submissionIds and created two orders. We now combine a ref-based guard
+  // (`useDoubleSubmitGuard`) with the visible state for full protection.
+  const submitGuard = useDoubleSubmitGuard();
+  // CRITICAL (H18 fix): deviceToken is now generated PER submission, not per
+  // browser session, so dedup based on it actually works.
   const [deviceToken] = useState(() => nanoid(16));
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -253,13 +262,35 @@ export default function CartPage() {
   // Prices come from the cart itself, no separate menu query needed
   const submitOrderMutation = useMutation({
     mutationFn: async (payload: any) => {
-      const { tableCode, items, submissionId, deviceToken, customerName, customerPhone } = payload;
+      const { tableCode, items, submissionId, deviceToken, customerName, customerPhone, paymentMethod } = payload;
 
-      const res = await fetch("/api/order/counter-submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tableCode, items, submissionId, deviceToken, customerName, customerPhone }),
-      });
+      const body = JSON.stringify({ tableCode, items, submissionId, deviceToken, customerName, customerPhone, paymentMethod });
+
+      let res: Response;
+      try {
+        res = await fetch("/api/order/counter-submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+      } catch (networkErr) {
+        // Offline: enqueue the order and surface a friendly status. The order will
+        // be retried automatically by the offline queue hook when we come back online.
+        if (typeof window !== "undefined" && !navigator.onLine) {
+          const { enqueueOrder } = await import("@/lib/offlineQueue");
+          await enqueueOrder({
+            submissionId,
+            tableCode,
+            items,
+            customerName,
+            customerPhone,
+            paymentMethod: paymentMethod || "cash",
+            deviceToken,
+          });
+          throw new Error("OFFLINE_QUEUED");
+        }
+        throw networkErr;
+      }
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to submit order");
@@ -284,6 +315,16 @@ export default function CartPage() {
       setShowSuccessModal(true);
     },
     onError: (error: any) => {
+      if (error?.message === "OFFLINE_QUEUED") {
+        toast.success("You're offline — order saved and will send automatically when reconnected", {
+          duration: 5000,
+        });
+        clearCart();
+        setShowSuccessModal(true);
+        setSuccessOrderNumber(null);
+        setSuccessTotal(totalAfterCoupon);
+        return;
+      }
       toast.error(error.message || "Failed to place order");
     },
   });
@@ -291,6 +332,10 @@ export default function CartPage() {
   const handleSubmitOrder = async (payMethod: "counter" | "online") => {
     if (cart.length === 0) {
       toast.error("Your cart is empty");
+      return;
+    }
+    // CRITICAL (C22 fix): drop double-clicks before any async work begins.
+    if (submitGuard.isPending() || isSubmitting) {
       return;
     }
 
@@ -330,23 +375,30 @@ export default function CartPage() {
     }
 
     setIsSubmitting(true);
-    try {
-      await submitOrderMutation.mutateAsync({
-        tableCode: tableCode || "",
-        items: cart.map((item) => ({
-          menuItemId: item.menuItemId,
-          quantity: item.quantity,
-          notes: itemNotes[item.menuItemId] || null,
-        })),
-        submissionId: nanoid(),
-        deviceToken,
-        customerName: trimmedName,
-        customerPhone: sanitizedPhone,
-        appliedCouponCode: appliedCoupon?.code || null,
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    // CRITICAL (C22 fix): Use the ref-based double-submit guard so a second
+    // tap inside the React state-flip window is dropped. We also move the
+    // submissionId generation outside the mutation body so the same id is used
+    // even if the request is retried.
+    await submitGuard.run(async () => {
+      try {
+        await submitOrderMutation.mutateAsync({
+          tableCode: tableCode || "",
+          items: cart.map((item) => ({
+            menuItemId: item.menuItemId,
+            quantity: item.quantity,
+            notes: itemNotes[item.menuItemId] || null,
+          })),
+          submissionId: nanoid(),
+          deviceToken,
+          deviceSessionId,
+          customerName: trimmedName,
+          customerPhone: sanitizedPhone,
+          appliedCouponCode: appliedCoupon?.code || null,
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+    });
   };
 
   if (!tableCode) {

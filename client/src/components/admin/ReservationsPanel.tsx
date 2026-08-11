@@ -60,7 +60,8 @@ export default function ReservationsPanel() {
 
   const updateStatus = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const token = (await supabase.auth.getSession()).access_token?.access_token;
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
       const res = await fetch(`/api/admin/reservations/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -78,7 +79,8 @@ export default function ReservationsPanel() {
 
   const deleteReservation = useMutation({
     mutationFn: async (id: number) => {
-      const token = (await supabase.auth.getSession()).access_token?.access_token;
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
       const res = await fetch(`/api/admin/reservations/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
@@ -96,7 +98,7 @@ export default function ReservationsPanel() {
     <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Book className="w-5 h-5 md:w-6 md:h-6" />
+          <BookOpen className="w-5 h-5 md:w-6 md:h-6" />
           Table Reservations
         </h2>
       </div>

@@ -54,15 +54,16 @@ router.get("/api/admin/analytics/revenue", async (req: Request, res: Response) =
       .where(and(eq(sessions.status, "settled"), gte(sessions.settledAt, start), lte(sessions.settledAt, end)))
       .orderBy(desc(sessions.settledAt));
 
-    const tableIds = [...new Set(allSettled.map(s => s.tableId))];
+    const tableIds = Array.from(new Set(allSettled.map(s => s.tableId)));
     const tablesData = tableIds.length > 0
       ? await db.select({ id: tables.id, label: tables.label }).from(tables).where(inArray(tables.id, tableIds))
       : [];
     const tableLabelMap = new Map(tablesData.map(t => [t.id, t.label]));
 
-    const todayRevenue = allSettled.filter(s => new Date(s.settledAt) >= todayStart)
+    const todayRevenue = allSettled.filter(s => s.settledAt && new Date(s.settledAt) >= todayStart)
       .reduce((sum, s) => sum + parseFloat(s.finalTotal?.toString() || "0"), 0);
     const yesterdayRevenue = allSettled.filter(s => {
+      if (!s.settledAt) return false;
       const d = new Date(s.settledAt);
       return d >= yesterdayStart && d < todayStart;
     }).reduce((sum, s) => sum + parseFloat(s.finalTotal?.toString() || "0"), 0);
@@ -70,14 +71,15 @@ router.get("/api/admin/analytics/revenue", async (req: Request, res: Response) =
 
     // Revenue by hour (today)
     const hourlyRev: Record<number, number> = {};
-    allSettled.filter(s => new Date(s.settledAt) >= todayStart).forEach(s => {
-      const h = new Date(s.settledAt).getHours();
+    allSettled.filter(s => s.settledAt && new Date(s.settledAt) >= todayStart).forEach(s => {
+      const h = new Date(s.settledAt as Date | string).getHours();
       hourlyRev[h] = (hourlyRev[h] || 0) + parseFloat(s.finalTotal?.toString() || "0");
     });
 
     // Revenue by day
     const dailyRev: Record<string, number> = {};
     allSettled.forEach(s => {
+      if (!s.settledAt) return;
       const key = new Date(s.settledAt).toISOString().slice(0, 10);
       dailyRev[key] = (dailyRev[key] || 0) + parseFloat(s.finalTotal?.toString() || "0");
     });
@@ -92,6 +94,7 @@ router.get("/api/admin/analytics/revenue", async (req: Request, res: Response) =
     // Yearly revenue
     const yearlyRev: Record<string, number> = {};
     allSettled.forEach(s => {
+      if (!s.settledAt) return;
       const key = new Date(s.settledAt).getFullYear().toString();
       yearlyRev[key] = (yearlyRev[key] || 0) + parseFloat(s.finalTotal?.toString() || "0");
     });
@@ -320,7 +323,7 @@ router.get("/api/admin/analytics/products", async (req: Request, res: Response) 
       : [];
     const menuMap = new Map(menuData.map(m => [m.id, m]));
 
-    const catIds = [...new Set(menuData.map(m => m.categoryId))];
+    const catIds = Array.from(new Set(menuData.map(m => m.categoryId)));
     const catData = catIds.length > 0
       ? await db.select({ id: categories.id, name: categories.name }).from(categories).where(inArray(categories.id, catIds))
       : [];
@@ -383,6 +386,7 @@ router.get("/api/admin/analytics/revenue-chart", async (req: Request, res: Respo
       daily[d.toISOString().slice(0, 10)] = 0;
     }
     settled.forEach(s => {
+      if (!s.settledAt) return;
       const key = new Date(s.settledAt).toISOString().slice(0, 10);
       if (daily[key] !== undefined) daily[key] += parseFloat(s.finalTotal?.toString() || "0");
     });
