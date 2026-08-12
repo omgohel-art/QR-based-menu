@@ -1,10 +1,19 @@
 import { Router, Request, Response } from "express";
+import { createClient } from "@supabase/supabase-js";
 import { getDb } from "../db";
-import { sql, eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getUserIdFromToken, fetchUserProfileByAuthId } from "./authRoutes";
 import { awardLoyaltyPoints } from "./loyaltyService";
 
 const router = Router();
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+let _sb: ReturnType<typeof createClient> | null = null;
+function sb() {
+  if (!_sb && SUPABASE_URL && SUPABASE_KEY) _sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+  return _sb as any;
+}
 
 type Source = "zomato" | "swiggy" | "manual" | "other";
 
@@ -29,15 +38,14 @@ const PAYMENT_FOR_SOURCE: Record<Source, string[]> = {
 
 interface AddExternalOrderPayload {
   source: Source;
-  aggregatorOrderId?: string;          // optional, dynamic label per source
+  aggregatorOrderId?: string;
   customerName?: string;
-  customerPhone?: string;              // 10-15 digits if provided
+  customerPhone?: string;
   items: { menuItemId: number; quantity: number; notes?: string }[];
   paymentMethod: "cash" | "upi" | "card" | "counter" | "aggregator";
   notes?: string;
 }
 
-// Cached business settings (per-request) to avoid two extra round-trips.
 async function loadBusinessSettings(db: any) {
   const r: any = await db.execute(sql`SELECT "gstEnabled", "gstRate", "serviceChargePercentage" FROM "businessSettings" LIMIT 1`);
   const row = r?.rows?.[0] || {};
@@ -67,7 +75,6 @@ function sanitisePhone(raw?: string): string {
   return raw.replace(/[^0-9]/g, "").slice(0, 15);
 }
 
-// Lookup an existing customer wallet by phone. Returns null if none found.
 async function findExistingWallet(db: any, phone: string): Promise<{ id: number; customerName: string | null; lifetimeEarned: number } | null> {
   if (!phone) return null;
   const r: any = await db.execute(sql`
@@ -108,7 +115,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "customerName too long (max 128 chars)" });
     }
 
-    // Validate + merge items. Dedupe by menuItemId (sum quantities).
     const cleanItems: Array<{ menuItemId: number; quantity: number; notes: string }> = [];
     for (const it of body.items) {
       const mid = parseInt(String(it.menuItemId ?? ""), 10);
@@ -133,7 +139,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
     const db = (await getDb()) as any;
     if (!db) return res.status(503).json({ error: "Database unavailable" });
 
-    // Fetch authoritative menu items + prices.
     const menuRes: any = await db.execute(sql`
       SELECT id, name, price, "isAvailable", "categoryId"
       FROM "menuItems"
@@ -153,11 +158,9 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       });
     }
 
-    // Existing customer detection (so the modal can show "Existing customer found").
     const existingWallet = customerPhone ? await findExistingWallet(db, customerPhone) : null;
     const resolvedCustomerName = (body.customerName?.trim() || existingWallet?.customerName || "") || null;
 
-    // Calculate totals from authoritative menu prices.
     let subtotal = 0;
     for (const { menuItemId, quantity } of cleanItems as any) {
       const price = parseFloat(menuById.get(menuItemId).price.toString());
@@ -170,7 +173,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
     const taxAmount = taxable * (settings.gstRate / 100);
     const total = +(subtotal + scAmount + taxAmount).toFixed(2);
 
-    // Atomic order number: try the helper RPC, fall back to MAX+1.
     let orderNumber: number | null = null;
     try {
       const r: any = await db.execute(sql`SELECT get_next_order_number() AS n`);
@@ -181,7 +183,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       for (let attempt = 0; attempt < 5; attempt++) {
         const r: any = await db.execute(sql`SELECT COALESCE(MAX("orderNumber"), 1000) AS n FROM orders`);
         orderNumber = parseInt(r?.rows?.[0]?.n || "1001", 10);
-        // We can't easily check uniqueness here; rely on UNIQUE index.
         break;
       }
     }
@@ -189,7 +190,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
     const submissionId = `EXT-${body.source.toUpperCase()}-${Date.now()}-${nanoidLite()}`;
     const deviceToken = `external-${body.source}`;
 
-    // Virtual table so the existing FK on orders.sessionId is satisfied.
     const tableLabel = `External (${SOURCE_LABEL[body.source]})`;
     const tableRes: any = await db.execute(sql`
       INSERT INTO tables (label, "tableCode", capacity, "isActive", "createdAt")
@@ -203,7 +203,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       virtualTableId = existing?.rows?.[0]?.id;
     }
 
-    // Session — status='closed' because the customer has already paid (we're logging a completed order).
     const sessionRes: any = await db.execute(sql`
       INSERT INTO sessions ("tableId", status, "customerName", "customerPhone",
                             "subtotal", "taxAmount", "serviceCharge", "discountAmount", "finalTotal",
@@ -215,8 +214,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
     `);
     const sessionId = sessionRes?.rows?.[0]?.id;
 
-    // Insert the order. paymentStatus='paid' since these orders are already settled
-    // (aggregator channels collect payment externally; walk-in / other staff-marked).
     const orderRes: any = await db.execute(sql`
       INSERT INTO orders ("sessionId", "submissionId", "deviceToken", "orderStatus", "orderNumber",
                           "paymentMethod", "paymentStatus",
@@ -235,7 +232,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
     const newOrder = orderRes?.rows?.[0];
     if (!newOrder) throw new Error("Failed to insert order");
 
-    // Insert order items with authoritative menu prices.
     for (const { menuItemId, quantity, notes } of cleanItems) {
       const mi = menuById.get(menuItemId);
       const price = parseFloat(mi.price.toString());
@@ -245,7 +241,6 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       `);
     }
 
-    // Inventory deduction — reuse the same helper that QR orders use.
     try {
       const { deductInventoryForOrder } = await import("./recipeRoutes");
       const itemsForDeduction = Array.from(cleanItems).map((it) => ({
@@ -257,11 +252,9 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
         console.log(`[External] Order #${orderNumber} low-stock:`, alerts.map((a: any) => a.inventoryName).join(", "));
       }
     } catch (invErr) {
-      // Inventory is best-effort — the order itself is the source of truth.
       console.error("[External] inventory deduction failed (non-fatal):", invErr);
     }
 
-    // Loyalty: only when we have a customer phone (consistent with QR flow).
     let loyaltyResult = { earned: 0, totalPoints: 0, milestoneReached: false, spinsAwarded: 0 };
     if (customerPhone && subtotal > 0) {
       try {
@@ -278,29 +271,25 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
       }
     }
 
-    // Best-effort KOT (for walk-in / other staff-marked orders the kitchen may need).
-    // For aggregator orders the kitchen still benefits from seeing them.
-    if (body.source !== "manual" || body.notes?.toLowerCase().includes("kitchen") || true) {
-      try {
-        const host = req.get("host");
-        const proto = req.protocol;
-        await fetch(`${proto}://${host}/api/print-kot/auto`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            orderId: newOrder.id,
-            orderNumber,
-            tableLabel: `External (${SOURCE_LABEL[body.source]})`,
-            items: Array.from(cleanItems).map((it) => ({
-              name: menuById.get(it.menuItemId).name,
-              quantity: it.quantity,
-              notes: it.notes || body.notes || "",
-            })),
-          }),
-        }).catch(() => undefined);
-      } catch (printErr) {
-        console.warn("[External] auto KOT failed:", printErr);
-      }
+    try {
+      const host = req.get("host");
+      const proto = req.protocol;
+      await fetch(`${proto}://${host}/api/print-kot/auto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: newOrder.id,
+          orderNumber,
+          tableLabel: `External (${SOURCE_LABEL[body.source]})`,
+          items: Array.from(cleanItems).map((it) => ({
+            name: menuById.get(it.menuItemId).name,
+            quantity: it.quantity,
+            notes: it.notes || body.notes || "",
+          })),
+        }),
+      }).catch(() => undefined);
+    } catch (printErr) {
+      console.warn("[External] auto KOT failed:", printErr);
     }
 
     res.json({
@@ -335,63 +324,64 @@ router.post("/api/aggregator/orders", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/aggregator/orders — list recent external orders, filterable by source.
+// GET /api/aggregator/orders — list recent external orders (Supabase REST).
 router.get("/api/aggregator/orders", async (req: Request, res: Response) => {
   try {
     if (!(await requireStaffOrAdmin(req, res))) return;
-    const db = (await getDb()) as any;
-    if (!db) return res.status(503).json({ error: "Database unavailable" });
+    const client = sb();
+    if (!client) return res.status(503).json({ error: "Database unavailable" });
     const source = (req.query.source as string) || "";
     const sinceParam = req.query.since as string | undefined;
     const limit = Math.max(1, Math.min(200, parseInt((req.query.limit as string) || "100", 10) || 100));
     const since = sinceParam ? new Date(sinceParam) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const sourceFilter = ALLOWED_SOURCES.includes(source as Source)
-      ? sql`AND "orderSource" = ${source}`
-      : sql``;
+    let q = client
+      .from("orders")
+      .select("id, orderNumber, orderSource, aggregatorOrderId, customerName, customerPhone, paymentMethod, paymentStatus, finalTotalAfterDiscount, submittedAt, orderStatus, loyaltyPointsEarned")
+      .neq("orderSource", "direct")
+      .gte("submittedAt", since.toISOString())
+      .order("submittedAt", { ascending: false })
+      .limit(limit);
+    if (ALLOWED_SOURCES.includes(source as Source)) {
+      q = q.eq("orderSource", source);
+    }
+    const { data: rows, error } = await q;
+    if (error) {
+      console.error("[External Order] list supabase error:", error);
+      return res.status(500).json({ error: "Failed to list external orders" });
+    }
+    const orders = rows || [];
 
-    const result: any = await db.execute(sql`
-      SELECT o.id, o."orderNumber", o."orderSource", o."aggregatorOrderId",
-             o."customerName", o."customerPhone", o."paymentMethod", o."paymentStatus",
-             o."finalTotalAfterDiscount", o."submittedAt", o."orderStatus",
-             o."loyaltyPointsEarned"
-      FROM orders o
-      WHERE o."orderSource" != 'direct'
-        AND o."submittedAt" >= ${since.toISOString()}
-        ${sourceFilter}
-      ORDER BY o."submittedAt" DESC
-      LIMIT ${limit}
-    `);
-    const rows = result?.rows || [];
-
-    // Pull the items for these orders in one shot.
-    if (rows.length > 0) {
-      const ids = rows.map((r: any) => r.id);
-      const itemsRes: any = await db.execute(sql`
-        SELECT oi."orderId", oi."menuItemId", oi.quantity, oi."priceAtOrderTime",
-               oi.notes, mi.name AS "menuItemName"
-        FROM "orderItems" oi
-        LEFT JOIN "menuItems" mi ON mi.id = oi."menuItemId"
-        WHERE oi."orderId" = ANY(${ids})
-        ORDER BY oi.id ASC
-      `);
+    if (orders.length > 0) {
+      const ids = orders.map((r: any) => r.id);
+      const { data: items } = await client
+        .from("orderItems")
+        .select("orderId, menuItemId, quantity, priceAtOrderTime, notes, menuItems(name)")
+        .in("orderId", ids)
+        .order("id", { ascending: true });
       const itemsByOrder = new Map<number, any[]>();
-      for (const it of itemsRes?.rows || []) {
+      for (const it of items || []) {
         if (!itemsByOrder.has(it.orderId)) itemsByOrder.set(it.orderId, []);
-        itemsByOrder.get(it.orderId)!.push(it);
+        itemsByOrder.get(it.orderId)!.push({
+          menuItemId: it.menuItemId,
+          quantity: it.quantity,
+          priceAtOrderTime: it.priceAtOrderTime,
+          notes: it.notes,
+          menuItemName: it.menuItems?.name || null,
+        });
       }
-      for (const row of rows) {
+      for (const row of orders) {
         (row as any).items = itemsByOrder.get(row.id) || [];
       }
     }
-    res.json(rows);
+    res.json(orders);
   } catch (err: any) {
     console.error("[External Order] list error:", err);
     res.status(500).json({ error: "Failed to list external orders" });
   }
 });
 
-// GET /api/aggregator/orders/:id — full detail for a single external order.
+// GET /api/aggregator/orders/:id — full detail (Supabase REST).
 router.get("/api/aggregator/orders/:id", async (req: Request, res: Response) => {
   try {
     if (!(await requireStaffOrAdmin(req, res))) return;
@@ -399,26 +389,41 @@ router.get("/api/aggregator/orders/:id", async (req: Request, res: Response) => 
     if (!Number.isFinite(id) || id <= 0) {
       return res.status(400).json({ error: "Invalid order id" });
     }
-    const db = (await getDb()) as any;
-    if (!db) return res.status(503).json({ error: "Database unavailable" });
-    const orderRes: any = await db.execute(sql`
-      SELECT o.*, s."subtotal" AS "sessionSubtotal", s."taxAmount" AS "sessionTax",
-             s."serviceCharge" AS "sessionSC", s."discountAmount" AS "sessionDiscount"
-      FROM orders o
-      LEFT JOIN sessions s ON s.id = o."sessionId"
-      WHERE o.id = ${id} AND o."orderSource" != 'direct'
-    `);
-    const order = orderRes?.rows?.[0];
+    const client = sb();
+    if (!client) return res.status(503).json({ error: "Database unavailable" });
+
+    const { data: order, error } = await client
+      .from("orders")
+      .select("*, sessions(subtotal, taxAmount, serviceCharge, discountAmount)")
+      .eq("id", id)
+      .neq("orderSource", "direct")
+      .maybeSingle();
+    if (error) {
+      console.error("[External Order] detail supabase error:", error);
+      return res.status(500).json({ error: "Failed to load external order" });
+    }
     if (!order) return res.status(404).json({ error: "External order not found" });
 
-    const itemsRes: any = await db.execute(sql`
-      SELECT oi.*, mi.name AS "menuItemName", mi.price AS "menuItemCurrentPrice"
-      FROM "orderItems" oi
-      LEFT JOIN "menuItems" mi ON mi.id = oi."menuItemId"
-      WHERE oi."orderId" = ${id}
-      ORDER BY oi.id ASC
-    `);
-    (order as any).items = itemsRes?.rows || [];
+    const { data: items } = await client
+      .from("orderItems")
+      .select("*, menuItems(name, price)")
+      .eq("orderId", id)
+      .order("id", { ascending: true });
+
+    const mapped = (items || []).map((it: any) => ({
+      ...it,
+      menuItemName: it.menuItems?.name || null,
+      menuItemCurrentPrice: it.menuItems?.price ?? null,
+    }));
+    (order as any).items = mapped;
+    const sess = (order as any).sessions;
+    if (sess) {
+      order.sessionSubtotal = sess.subtotal;
+      order.sessionTax = sess.taxAmount;
+      order.sessionSC = sess.serviceCharge;
+      order.sessionDiscount = sess.discountAmount;
+      delete order.sessions;
+    }
     res.json(order);
   } catch (err: any) {
     console.error("[External Order] detail error:", err);
@@ -427,7 +432,7 @@ router.get("/api/aggregator/orders/:id", async (req: Request, res: Response) => 
 });
 
 // DELETE /api/aggregator/orders/:id — cancel an external order (admin only).
-// Reverses inventory deductions via the same helper that QR orders use.
+// NOTE: write path — still uses drizzle getDb() (works when DB reachable).
 router.delete("/api/aggregator/orders/:id", async (req: Request, res: Response) => {
   try {
     const userId = getUserIdFromToken(req);
@@ -453,16 +458,11 @@ router.delete("/api/aggregator/orders/:id", async (req: Request, res: Response) 
       return res.json({ success: true, alreadyCancelled: true });
     }
 
-    // Reverse inventory deductions by adding them back (negative deduction = add).
     try {
-      const { deductInventoryForOrder } = await import("./recipeRoutes");
       const itemsRes: any = await db.execute(sql`
         SELECT "menuItemId", quantity FROM "orderItems" WHERE "orderId" = ${id} AND "menuItemId" IS NOT NULL
       `);
       const items = itemsRes?.rows || [];
-      // deductInventoryForOrder subtracts qty from inventory. We can't add back with the
-      // same helper without an inverse variant, so do a direct positive increment guarded
-      // by the same UPDATE ... WHERE currentStock >= 0 pattern.
       for (const it of items) {
         await db.execute(sql`
           UPDATE "inventoryItems"
@@ -487,39 +487,24 @@ router.delete("/api/aggregator/orders/:id", async (req: Request, res: Response) 
   }
 });
 
-// GET /api/aggregator/stats — counts + revenue per source for a time window.
+// GET /api/aggregator/stats — counts + revenue per source (Supabase REST).
 router.get("/api/aggregator/stats", async (req: Request, res: Response) => {
   try {
     if (!(await requireStaffOrAdmin(req, res))) return;
-    const db = (await getDb()) as any;
-    if (!db) return res.status(503).json({ error: "Database unavailable" });
+    const client = sb();
+    if (!client) return res.status(503).json({ error: "Database unavailable" });
     const sinceParam = req.query.since as string | undefined;
     const since = sinceParam ? new Date(sinceParam) : new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const bySource: any = await db.execute(sql`
-      SELECT "orderSource",
-             COUNT(*)::int AS count,
-             COALESCE(SUM("finalTotalAfterDiscount"::numeric), 0)::numeric AS revenue,
-             COALESCE(AVG("finalTotalAfterDiscount"::numeric), 0)::numeric AS "avgOrderValue"
-      FROM orders
-      WHERE "submittedAt" >= ${since.toISOString()}
-      GROUP BY "orderSource"
-    `);
-
-    // Top items per external source for the same window.
-    const topItems: any = await db.execute(sql`
-      SELECT o."orderSource", oi."menuItemId", mi.name AS "menuItemName",
-             SUM(oi.quantity)::int AS quantity,
-             SUM(oi.quantity * oi."priceAtOrderTime")::numeric AS revenue
-      FROM "orderItems" oi
-      JOIN orders o ON o.id = oi."orderId"
-      LEFT JOIN "menuItems" mi ON mi.id = oi."menuItemId"
-      WHERE o."submittedAt" >= ${since.toISOString()}
-        AND oi."menuItemId" IS NOT NULL
-      GROUP BY o."orderSource", oi."menuItemId", mi.name
-      ORDER BY quantity DESC
-      LIMIT 50
-    `);
+    const { data: orders, error } = await client
+      .from("orders")
+      .select("id, orderSource, finalTotalAfterDiscount, submittedAt")
+      .gte("submittedAt", since.toISOString())
+      .limit(2000);
+    if (error) {
+      console.error("[External Order] stats supabase error:", error);
+      return res.status(500).json({ error: "Failed to fetch external stats" });
+    }
 
     const stats: Record<string, { count: number; revenue: number; avgOrderValue: number }> = {
       direct: { count: 0, revenue: 0, avgOrderValue: 0 },
@@ -528,23 +513,57 @@ router.get("/api/aggregator/stats", async (req: Request, res: Response) => {
       manual: { count: 0, revenue: 0, avgOrderValue: 0 },
       other: { count: 0, revenue: 0, avgOrderValue: 0 },
     };
-    for (const r of bySource?.rows || []) {
-      stats[r.orderSource] = {
-        count: r.count,
-        revenue: parseFloat(r.revenue) || 0,
-        avgOrderValue: parseFloat(r.avgOrderValue) || 0,
-      };
+    const revenueBySource: Record<string, number> = {};
+    for (const o of orders || []) {
+      const src = o.orderSource || "direct";
+      if (!stats[src]) stats[src] = { count: 0, revenue: 0, avgOrderValue: 0 };
+      stats[src].count += 1;
+      revenueBySource[src] = (revenueBySource[src] || 0) + (Number(o.finalTotalAfterDiscount) || 0);
+    }
+    for (const src of Object.keys(stats)) {
+      stats[src].revenue = +(revenueBySource[src] || 0).toFixed(2);
+      stats[src].avgOrderValue = stats[src].count > 0 ? +(stats[src].revenue / stats[src].count).toFixed(2) : 0;
     }
 
+    // Top items per source for the same window.
+    const orderIds = (orders || []).map((o: any) => o.id);
     const itemsBySource: Record<string, any[]> = {};
-    for (const it of topItems?.rows || []) {
-      if (!itemsBySource[it.orderSource]) itemsBySource[it.orderSource] = [];
-      itemsBySource[it.orderSource].push({
-        menuItemId: it.menuItemId,
-        name: it.menuItemName,
-        quantity: it.quantity,
-        revenue: parseFloat(it.revenue) || 0,
-      });
+    if (orderIds.length > 0) {
+      const { data: items } = await client
+        .from("orderItems")
+        .select("orderId, menuItemId, quantity, priceAtOrderTime, menuItems(name)")
+        .in("orderId", orderIds);
+      const orderSourceMap = new Map<number, string>();
+      for (const o of orders || []) orderSourceMap.set(o.id, o.orderSource || "direct");
+
+      const grouped = new Map<string, { menuItemId: number; name: string; quantity: number; revenue: number; _src: string }>();
+      for (const it of items || []) {
+        const src = orderSourceMap.get(it.orderId) || "direct";
+        if (src === "direct") continue;
+        const key = `${src}::${it.menuItemId}`;
+        const cur = grouped.get(key);
+        const qty = Number(it.quantity) || 0;
+        const rev = qty * (Number(it.priceAtOrderTime) || 0);
+        if (cur) {
+          cur.quantity += qty;
+          cur.revenue += rev;
+        } else {
+          grouped.set(key, {
+            menuItemId: it.menuItemId,
+            name: it.menuItems?.name || `Item #${it.menuItemId}`,
+            quantity: qty,
+            revenue: rev,
+            _src: src,
+          });
+        }
+      }
+      const sorted = Array.from(grouped.values()).sort((a, b) => b.quantity - a.quantity);
+      for (const v of sorted) {
+        v.revenue = +v.revenue.toFixed(2);
+        const { _src, ...rest } = v;
+        if (!itemsBySource[_src]) itemsBySource[_src] = [];
+        itemsBySource[_src].push(rest);
+      }
     }
 
     res.json({ since: since.toISOString(), bySource: stats, topItemsBySource: itemsBySource });
@@ -554,22 +573,27 @@ router.get("/api/aggregator/stats", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/aggregator/customers/lookup?phone=... — used by the modal to show
-// "Existing customer found" and pre-fill the name.
+// GET /api/aggregator/customers/lookup?phone=... (Supabase REST).
 router.get("/api/aggregator/customers/lookup", async (req: Request, res: Response) => {
   try {
     if (!(await requireStaffOrAdmin(req, res))) return;
     const phone = sanitisePhone((req.query.phone as string) || "");
     if (!phone) return res.json({ found: false });
-    const db = (await getDb()) as any;
-    if (!db) return res.status(503).json({ error: "Database unavailable" });
-    const wallet = await findExistingWallet(db, phone);
+    const client = sb();
+    if (!client) return res.status(503).json({ error: "Database unavailable" });
+
+    const { data } = await client
+      .from("loyaltyWallets")
+      .select("id, customerName, lifetimeEarned")
+      .eq("customerPhone", phone)
+      .limit(1);
+    const wallet = (data || [])[0];
     if (!wallet) return res.json({ found: false });
     res.json({
       found: true,
       walletId: wallet.id,
       customerName: wallet.customerName,
-      lifetimeEarned: wallet.lifetimeEarned,
+      lifetimeEarned: Number(wallet.lifetimeEarned) || 0,
     });
   } catch (err: any) {
     console.error("[External Order] customer lookup error:", err);
@@ -578,7 +602,6 @@ router.get("/api/aggregator/customers/lookup", async (req: Request, res: Respons
 });
 
 function nanoidLite(): string {
-  // 6-char alphanumeric. Not cryptographic.
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let out = "";
   for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
