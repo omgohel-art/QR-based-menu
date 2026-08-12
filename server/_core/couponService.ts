@@ -1,11 +1,12 @@
-import postgres from "postgres";
+import { createClient } from "@supabase/supabase-js";
 
-const env = process.env;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
 
-let _sql: ReturnType<typeof postgres> | null = null;
-function sql() {
-  if (!_sql) _sql = postgres(env.DATABASE_URL!, { ssl: { rejectUnauthorized: false } });
-  return _sql;
+let _sb: ReturnType<typeof createClient> | null = null;
+function sb() {
+  if (!_sb && SUPABASE_URL && SUPABASE_KEY) _sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+  return _sb as any;
 }
 
 export interface CouponRecord {
@@ -36,8 +37,9 @@ function generateCouponCode(): string {
 async function ensureUniqueCode(attempt = 0): Promise<string> {
   if (attempt > 10) throw new Error("Could not generate unique coupon code");
   const code = generateCouponCode();
-  const existing = await sql()`SELECT id FROM "loyaltyCoupons" WHERE code = ${code}`;
-  if (existing.length > 0) return ensureUniqueCode(attempt + 1);
+  const client = sb();
+  const { data } = await client.from("loyaltyCoupons").select("id").eq("code", code);
+  if (data && data.length > 0) return ensureUniqueCode(attempt + 1);
   return code;
 }
 
@@ -54,12 +56,23 @@ export async function createCoupon(params: {
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + expiryMonths);
 
-  const rows = await sql()`
-    INSERT INTO "loyaltyCoupons" ("walletId", "code", "discountPercent", "status", "expiresAt", "source", "rewardType", "rewardLabel")
-    VALUES (${params.walletId}, ${code}, ${params.discountPercent}, 'active', ${expiresAt.toISOString()}, ${params.source}, ${params.rewardType}, ${params.rewardLabel})
-    RETURNING *
-  `;
-  return rows[0] as CouponRecord;
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .insert({
+      walletId: params.walletId,
+      code,
+      discountPercent: params.discountPercent,
+      status: "active",
+      expiresAt: expiresAt.toISOString(),
+      source: params.source,
+      rewardType: params.rewardType,
+      rewardLabel: params.rewardLabel,
+    })
+    .select()
+    .single();
+  if (!data) throw new Error("Failed to create coupon");
+  return data as CouponRecord;
 }
 
 export async function createDiscountCoupon(params: {
@@ -101,9 +114,14 @@ export async function validateCoupon(code: string, customerPhone?: string): Prom
   // (the previous code flipped status='expired' as a side effect, which made
   // retries and concurrent validations flaky). Expiry is reported as a valid
   // result with an `error` field; the caller decides whether to flip status.
-  const rows = await sql()`SELECT * FROM "loyaltyCoupons" WHERE upper(code) = ${code.toUpperCase()}`;
-  if (rows.length === 0) return { valid: false, error: "Coupon not found" };
-  const coupon = rows[0] as CouponRecord;
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .select("*")
+    .filter("code", "ilike", code.toUpperCase())
+    .limit(1);
+  if (!data || data.length === 0) return { valid: false, error: "Coupon not found" };
+  const coupon = data[0] as CouponRecord;
 
   if (coupon.status === "used") return { valid: false, error: "Coupon already used" };
   if (coupon.status === "expired") return { valid: false, error: "Coupon expired" };
@@ -113,8 +131,12 @@ export async function validateCoupon(code: string, customerPhone?: string): Prom
   if (customerPhone) {
     // H10 fix: phone ownership is enforced, but to avoid leaking existence we
     // do not distinguish "phone not found" from "phone doesn't own this coupon".
-    const wallet = await sql()`SELECT id FROM "loyaltyWallets" WHERE "customerPhone" = ${customerPhone}`;
-    if (wallet.length === 0 || coupon.walletId !== (wallet[0] as any).id) {
+    const { data: wallet } = await client
+      .from("loyaltyWallets")
+      .select("id")
+      .eq("customerPhone", customerPhone)
+      .limit(1);
+    if (!wallet || wallet.length === 0 || coupon.walletId !== wallet[0].id) {
       return { valid: false, error: "Coupon does not belong to this customer" };
     }
   }
@@ -123,61 +145,81 @@ export async function validateCoupon(code: string, customerPhone?: string): Prom
 }
 
 export async function applyCoupon(couponId: number, orderId: number): Promise<CouponRecord> {
-  const rows = await sql()`
-    UPDATE "loyaltyCoupons"
-    SET status = 'used', "redeemedAt" = NOW(), "redeemedOrderId" = ${orderId}
-    WHERE id = ${couponId} AND status = 'active'
-    RETURNING *
-  `;
-  if (rows.length === 0) throw new Error("Coupon not found or already used");
-  return rows[0] as CouponRecord;
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .update({ status: "used", redeemedAt: new Date().toISOString(), redeemedOrderId: orderId })
+    .eq("id", couponId)
+    .eq("status", "active")
+    .select()
+    .single();
+  if (!data) throw new Error("Coupon not found or already used");
+  return data as CouponRecord;
 }
 
 export async function expireCoupons(): Promise<number> {
-  const rows = await sql()`
-    UPDATE "loyaltyCoupons"
-    SET status = 'expired'
-    WHERE status = 'active' AND "expiresAt" < NOW()
-    RETURNING id
-  `;
-  return rows.length;
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .update({ status: "expired" })
+    .eq("status", "active")
+    .lt("expiresAt", new Date().toISOString())
+    .select("id");
+  return (data || []).length;
+}
+
+async function getWalletIdForPhone(phone: string): Promise<number | null> {
+  const client = sb();
+  const { data } = await client.from("loyaltyWallets").select("id").eq("customerPhone", phone).limit(1);
+  return data && data.length > 0 ? (data[0].id as number) : null;
 }
 
 export async function getCustomerCoupons(phone: string): Promise<CouponRecord[]> {
-  const rows = await sql()`
-    SELECT c.* FROM "loyaltyCoupons" c
-    JOIN "loyaltyWallets" w ON c."walletId" = w.id
-    WHERE w."customerPhone" = ${phone}
-    ORDER BY c."createdAt" DESC
-  `;
-  return rows as unknown as CouponRecord[];
+  const walletId = await getWalletIdForPhone(phone);
+  if (!walletId) return [];
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .select("*")
+    .eq("walletId", walletId)
+    .order("createdAt", { ascending: false });
+  return (data || []) as CouponRecord[];
 }
 
 export async function getActiveCoupons(phone: string): Promise<CouponRecord[]> {
-  const rows = await sql()`
-    SELECT c.* FROM "loyaltyCoupons" c
-    JOIN "loyaltyWallets" w ON c."walletId" = w.id
-    WHERE w."customerPhone" = ${phone} AND c.status = 'active'
-    AND (c."expiresAt" IS NULL OR c."expiresAt" > NOW())
-    ORDER BY c."createdAt" DESC
-  `;
-  return rows as unknown as CouponRecord[];
+  const walletId = await getWalletIdForPhone(phone);
+  if (!walletId) return [];
+  const client = sb();
+  const { data } = await client
+    .from("loyaltyCoupons")
+    .select("*")
+    .eq("walletId", walletId)
+    .eq("status", "active")
+    .filter("expiresAt", "gt", new Date().toISOString())
+    .order("createdAt", { ascending: false });
+  return (data || []) as CouponRecord[];
 }
 
 export async function getAllCoupons(): Promise<(CouponRecord & { customerPhone: string; customerName: string | null })[]> {
-  const rows = await sql()`
-    SELECT c.*, w."customerPhone", w."customerName"
-    FROM "loyaltyCoupons" c
-    JOIN "loyaltyWallets" w ON c."walletId" = w.id
-    ORDER BY c."createdAt" DESC
-  `;
-  return rows as any[];
+  const client = sb();
+  const { data: wallets } = await client.from("loyaltyWallets").select("id, customerPhone, customerName");
+  const walletMap = new Map<number, { customerPhone: string; customerName: string | null }>(
+    (wallets || []).map((w: any) => [w.id, { customerPhone: w.customerPhone, customerName: w.customerName }])
+  );
+  const { data } = await client.from("loyaltyCoupons").select("*").order("createdAt", { ascending: false });
+  return ((data || []) as CouponRecord[]).map((c) => ({
+    ...c,
+    customerPhone: walletMap.get(c.walletId)?.customerPhone || "",
+    customerName: walletMap.get(c.walletId)?.customerName ?? null,
+  }));
 }
 
 export async function deactivateCoupon(couponId: number): Promise<void> {
-  await sql()`UPDATE "loyaltyCoupons" SET status = 'expired' WHERE id = ${couponId}`;
+  const client = sb();
+  await client.from("loyaltyCoupons").update({ status: "expired" }).eq("id", couponId);
 }
 
 export async function forceExpireCoupon(couponId: number): Promise<void> {
-  await sql()`UPDATE "loyaltyCoupons" SET status = 'expired' WHERE id = ${couponId} AND status = 'active'`;
+  const client = sb();
+  await client.from("loyaltyCoupons").update({ status: "expired" }).eq("id", couponId).eq("status", "active");
 }

@@ -129,6 +129,13 @@ router.get("/api/public/business-settings", async (_req: Request, res: Response)
   try {
     const db = await getDb();
     if (!db) {
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data: sbData } = await sb.from("businessSettings").select("*").limit(1).single();
+        settingsCache.set("businessSettings", sbData);
+        setCacheHeaders(res);
+        return res.json(sbData);
+      }
       return res.status(503).json({ error: "Database not available" });
     }
     const data = await db.select().from(businessSettings).limit(1).then((rows) => rows[0] ?? null);
@@ -137,6 +144,17 @@ router.get("/api/public/business-settings", async (_req: Request, res: Response)
     res.json(data);
   } catch (err) {
     console.error("[Cache] Failed to fetch business settings:", err);
+    try {
+      const sb = getSupabaseFallback();
+      if (sb) {
+        const { data: sbData } = await sb.from("businessSettings").select("*").limit(1).single();
+        settingsCache.set("businessSettings", sbData);
+        setCacheHeaders(res);
+        return res.json(sbData);
+      }
+    } catch (fbErr) {
+      console.error("[Cache] Supabase fallback exception for business settings:", fbErr);
+    }
     res.status(500).json({ error: "Failed to fetch business settings" });
   }
 });
