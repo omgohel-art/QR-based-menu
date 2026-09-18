@@ -82,6 +82,15 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
   const [showQueueDetail, setShowQueueDetail] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ itemId: number; itemName: string; action: 'serve' | 'undo' } | null>(null);
   const cardsContainerRef = useRef<HTMLDivElement>(null);
+  const [autoPrintKOT, setAutoPrintKOT] = useState<boolean>(() => {
+    return localStorage.getItem("autoPrintKOTEnabled") === "true";
+  });
+
+  const toggleAutoPrintKOT = (enabled: boolean) => {
+    setAutoPrintKOT(enabled);
+    localStorage.setItem("autoPrintKOTEnabled", enabled ? "true" : "false");
+    toast.success(enabled ? "Auto-Print KOT Enabled" : "Auto-Print KOT Disabled");
+  };
 
   const { data: orderQueue, isLoading: isLoadingQueue } = useQuery({
     queryKey: ['orderQueue'],
@@ -378,6 +387,14 @@ export default function OrderQueue({ highlightOrderId }: OrderQueueProps) {
                   <Badge variant="outline" className="text-xs font-mono">
                     #{order.orderNumber?.toString().padStart(3, '0') || order.id}
                   </Badge>
+                  <Button
+                    size="sm"
+                    className="ml-2 bg-amber-600 hover:bg-amber-700 text-white font-smaller rounded-lg transition-all"
+                    onClick={() => printKOTMutation.mutate(order)}
+                    disabled={printKOTMutation.isPending}
+                  >
+                    <Printer className="w-3 h-3" /> KOT
+                  </Button>
                 </div>
               </div>
 

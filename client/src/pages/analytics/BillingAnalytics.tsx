@@ -71,7 +71,7 @@ export default function BillingAnalytics() {
     <AnalyticsDrillDown
       title="Billing Analytics"
       icon={<Receipt className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Billing" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Billing" }]}
       search={search} onSearchChange={setSearch}
       onExport={handleExport} onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

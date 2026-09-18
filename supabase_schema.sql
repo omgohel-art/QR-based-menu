@@ -86,6 +86,19 @@ CREATE TABLE "serviceRequests" (
 CREATE INDEX "serviceRequests_tableCode_idx" ON "serviceRequests"("tableCode");
 CREATE INDEX "serviceRequests_status_idx" ON "serviceRequests"("status");
 
+-- Enable RLS on serviceRequests table
+ALTER TABLE "serviceRequests" ENABLE ROW LEVEL SECURITY;
+
+-- Allow inserts via anon/authed keys (customers calling waiter)
+CREATE POLICY "Allow insert for service requests" ON "serviceRequests"
+FOR INSERT TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+-- Allow selects via service_role key (staff/admin dashboard)
+CREATE POLICY "Allow service role select" ON "serviceRequests"
+FOR SELECT TO service_role USING (true);
+
 CREATE TABLE "orderItems" (
   id SERIAL PRIMARY KEY,
   "orderId" INTEGER NOT NULL,

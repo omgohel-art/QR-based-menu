@@ -374,64 +374,71 @@ export default function MenuItemsPanel() {
           </Dialog>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           {categories?.map((category: any) => (
-            <Card key={category.id} className="p-4 border border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <div>
-                <h3 className="font-semibold text-slate-900 dark:text-white">{category.name}</h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                  {menuItems?.filter((i: any) => i.categoryId === category.id).length || 0} items
-                </p>
-              </div>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => {
-                    const sorted = [...(categories || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-                    const idx = sorted.findIndex((c) => c.id === category.id);
-                    if (idx > 0) {
-                      const prev = sorted[idx - 1];
-                      reorderCategoryMutation.mutate({ id: category.id, newOrder: (prev.displayOrder ?? 0) - 1 });
-                      reorderCategoryMutation.mutate({ id: prev.id, newOrder: (category.displayOrder ?? 0) });
-                    }
-                  }}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-slate-400 dark:text-slate-500 hover:text-slate-700"
-                >
-                  <ChevronUp className="w-4 h-4" />
-                </Button>
-                <Button
-                  onClick={() => {
-                    const sorted = [...(categories || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-                    const idx = sorted.findIndex((c) => c.id === category.id);
-                    if (idx < sorted.length - 1) {
-                      const next = sorted[idx + 1];
-                      reorderCategoryMutation.mutate({ id: category.id, newOrder: (next.displayOrder ?? 0) + 1 });
-                      reorderCategoryMutation.mutate({ id: next.id, newOrder: (category.displayOrder ?? 0) });
-                    }
-                  }}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-slate-400 dark:text-slate-500 hover:text-slate-700"
-                >
-                  <ChevronDown className="w-4 h-4" />
-                </Button>
-                <Button
-                  onClick={() => setEditingCategory({ id: category.id, name: category.name })}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-slate-600 dark:text-slate-400 hover:text-blue-500"
-                >
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button
-                  onClick={() => setConfirmDelete({ type: 'category', id: category.id, name: category.name })}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+
+            <Card key={category.id} className="p-4 border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-slate-900 dark:text-white">{category.name}</h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                    {menuItems?.filter((i: any) => i.categoryId === category.id).length || 0} items
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {/* Reorder Up */}
+                  <Button
+                    onClick={() => {
+                      const sorted = [...(categories || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+                      const idx = sorted.findIndex((c) => c.id === category.id);
+                      if (idx > 0) {
+                        const prev = sorted[idx - 1];
+                        reorderCategoryMutation.mutate({ id: category.id, newOrder: (prev.displayOrder ?? 0) - 1 });
+                        reorderCategoryMutation.mutate({ id: prev.id, newOrder: (category.displayOrder ?? 0) });
+                      }
+                    }}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </Button>
+                  {/* Reorder Down */}
+                  <Button
+                    onClick={() => {
+                      const sorted = [...(categories || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+                      const idx = sorted.findIndex((c) => c.id === category.id);
+                      if (idx < sorted.length - 1) {
+                        const next = sorted[idx + 1];
+                        reorderCategoryMutation.mutate({ id: category.id, newOrder: (next.displayOrder ?? 0) + 1 });
+                        reorderCategoryMutation.mutate({ id: next.id, newOrder: (category.displayOrder ?? 0) });
+                      }
+                    }}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 hover:text-slate-700 flex items-center justify-center transition-colors"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                  {/* Edit */}
+                  <Button
+                    onClick={() => setEditingCategory({ id: category.id, name: category.name })}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 hover:text-blue-500 flex items-center justify-center transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  {/* Delete */}
+                  <Button
+                    onClick={() => setConfirmDelete({ type: 'category', id: category.id, name: category.name })}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-red-600 dark:text-red-400 hover:text-red-300 hover:bg-red-950/80 flex items-center justify-center transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             </Card>
           ))}
@@ -676,7 +683,7 @@ export default function MenuItemsPanel() {
                         {item.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{item.description}</p>}
                         <p className="text-sm font-bold text-green-500 mt-1">{fmtPrice(typeof item.price === 'string' ? parseFloat(item.price) : (item.price as number))}</p>
                       </div>
-                      <div className="flex gap-1 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <div className="grid grid-cols-2 gap-1 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                         <Button
                             onClick={() => setEditingMenuItem({
                               id: item.id,

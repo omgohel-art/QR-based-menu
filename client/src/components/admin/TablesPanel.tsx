@@ -6,11 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { TabsContent } from "@/components/ui/tabs";
-import { Plus, Trash2, Pencil, QrCode, Copy, Check, FileDown, Loader2 } from "lucide-react";
+import { Plus, Trash2, Pencil, QrCode, Copy, Check, FileDown, Loader2, ArrowRightLeft } from "lucide-react";
 import QRCode from 'qrcode';
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
 import { TableGridSkeleton } from "@/components/Skeletons";
+import TableOperationsModal from "./TableOperationsModal";
 
 export default function TablesPanel() {
   const queryClient = useQueryClient();
@@ -21,6 +22,7 @@ export default function TablesPanel() {
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [bulkQrBusy, setBulkQrBusy] = useState(false);
+  const [operationsTable, setOperationsTable] = useState<{ id: number; label: string; tableCode: string } | null>(null);
 
   const { data: tablesData, isLoading: isTablesLoading } = useQuery({
     queryKey: ['tables'],
@@ -121,7 +123,7 @@ export default function TablesPanel() {
   const handleShowQr = async (code: string, label: string) => {
     const url = `${window.location.origin}/table/${code}`;
     try {
-      const dataUrl = await QRCode.toDataURL(url, { width: 350, margin: 2, color: { dark: '#1e293b' } });
+      const dataUrl = await QRCode.toDataURL(url, { width: 450, margin: 2, color: { dark: '#1e293b' } });
       setQrDataUrl(dataUrl);
       setQrTable({ tableCode: code, label });
     } catch {
@@ -247,9 +249,9 @@ export default function TablesPanel() {
           {isTablesLoading ? (
             <TableGridSkeleton />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {tablesData?.map((table: any) => (
-                <Card key={table.id} className="p-3 md:p-5 border border-slate-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-900 hover:shadow-lg transition-shadow">
+                <Card key={table.id} className="p-3 md:p-4 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:shadow-md transition-shadow flex flex-col">
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-xl font-bold text-slate-900 dark:text-white">{table.label}</h3>
                     <span className={`text-xs px-2 py-1 rounded font-mono ${table.status === 'empty' ? 'bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400'}`}>
@@ -257,20 +259,29 @@ export default function TablesPanel() {
                     </span>
                   </div>
 
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono break-all mb-4 bg-slate-50 dark:bg-slate-800 p-2 rounded">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono break-all mb-2 bg-slate-50 dark:bg-slate-800 p-1 rounded">
                     Code: {table.tableCode}
                   </p>
 
-                  <p className="text-xs text-slate-400 dark:text-slate-500 font-mono break-all mb-4 line-clamp-1">
+                  <p className="text-xs text-slate-400 dark:text-slate-500 font-mono break-all mb-1 line-clamp-1">
                     {window.location.origin}/table/{table.tableCode}
                   </p>
 
-                  <div className="flex flex-wrap gap-2 mt-auto pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <Button
+                      onClick={() => setOperationsTable({ id: table.id, label: table.label, tableCode: table.tableCode })}
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs font-semibold gap-1.5 rounded-lg border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-300"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                      Transfer / Merge / Split
+                    </Button>
                     <Button
                       onClick={() => handleCopyUrl(table.tableCode, table.id)}
                       variant="ghost"
                       size="sm"
-                      className="flex-1 text-xs gap-1.5"
+                      className="flex-1 text-xs gap-1.5 rounded"
                     >
                       {copiedId === table.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                       {copiedId === table.id ? "Copied" : "Copy URL"}
@@ -279,7 +290,7 @@ export default function TablesPanel() {
                       onClick={() => handleShowQr(table.tableCode, table.label)}
                       variant="ghost"
                       size="sm"
-                      className="flex-1 text-xs gap-1.5"
+                      className="flex-1 text-xs gap-1.5 rounded"
                     >
                       <QrCode className="w-3.5 h-3.5" />
                       QR Code
@@ -288,7 +299,7 @@ export default function TablesPanel() {
                       onClick={() => setEditingTable({ id: table.id, label: table.label })}
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 flex items-center justify-center transition-colors"
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
@@ -296,7 +307,7 @@ export default function TablesPanel() {
                       onClick={() => setConfirmDelete({ type: 'table', id: table.id, name: table.label })}
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                      className="h-10 w-10 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-red-600 dark:text-red-400 hover:text-red-300 hover:bg-red-950/80 flex items-center justify-center transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
@@ -399,6 +410,12 @@ export default function TablesPanel() {
           )}
         </DialogContent>
       </Dialog>
+      <TableOperationsModal
+        isOpen={operationsTable !== null}
+        onClose={() => setOperationsTable(null)}
+        table={operationsTable}
+        allTables={tablesData || []}
+      />
     </>
   );
 }

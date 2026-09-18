@@ -54,15 +54,6 @@ type BusinessData = {
   serviceChargePercentage: number;
   notifEnabled: boolean;
   reservationEnabled: boolean;
-  // GST invoice compliance
-  panNumber: string | null;
-  stateCode: string | null;
-  sacCode: string | null;
-  placeOfSupply: string | null;
-  isInterState: boolean;
-  cgstRate: number;
-  sgstRate: number;
-  igstRate: number;
 };
 
 export default function BusinessSettings() {
@@ -110,15 +101,6 @@ export default function BusinessSettings() {
     serviceChargePercentage: 0,
     notifEnabled: true,
     reservationEnabled: false,
-    // GST invoice compliance
-    panNumber: "",
-    stateCode: "",
-    sacCode: "",
-    placeOfSupply: "",
-    isInterState: false,
-    cgstRate: 9,
-    sgstRate: 9,
-    igstRate: 18,
   });
 
   const [gstError, setGstError] = useState("");
@@ -151,14 +133,6 @@ export default function BusinessSettings() {
         serviceChargePercentage: settings.serviceChargePercentage ?? 0,
         notifEnabled: settings.notifEnabled ?? true,
         reservationEnabled: settings.reservationEnabled ?? false,
-        panNumber: settings.panNumber || "",
-        stateCode: settings.stateCode || "",
-        sacCode: settings.sacCode || "",
-        placeOfSupply: settings.placeOfSupply || "",
-        isInterState: settings.isInterState ?? false,
-        cgstRate: settings.cgstRate ?? 9,
-        sgstRate: settings.sgstRate ?? 9,
-        igstRate: settings.igstRate ?? 18,
       });
     }
   }, [settings]);
@@ -208,9 +182,6 @@ export default function BusinessSettings() {
         sacCode: form.sacCode.trim() || null,
         placeOfSupply: form.placeOfSupply.trim() || null,
         isInterState: form.isInterState,
-        cgstRate: form.cgstRate,
-        sgstRate: form.sgstRate,
-        igstRate: form.igstRate,
         updatedAt: new Date().toISOString(),
       };
       if (!payload.restaurantName) throw new Error("Restaurant Name is required");
@@ -300,11 +271,11 @@ export default function BusinessSettings() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Restaurant Name *</Label>
-            <Input value={form.restaurantName} onChange={(e) => updateField("restaurantName", e.target.value)} placeholder="MAMA Cafe" />
+            <Input value={form.restaurantName} onChange={(e) => updateField("restaurantName", e.target.value)} placeholder="Your café" />
           </div>
           <div className="space-y-2">
             <Label>Legal Business Name *</Label>
-            <Input value={form.legalBusinessName} onChange={(e) => updateField("legalBusinessName", e.target.value)} placeholder="MAMA Cafe Pvt. Ltd." />
+            <Input value={form.legalBusinessName} onChange={(e) => updateField("legalBusinessName", e.target.value)} placeholder="Your business" />
           </div>
           <div className="space-y-2">
             <Label>GST Number *</Label>
@@ -620,12 +591,12 @@ export default function BusinessSettings() {
             <div className="mt-3 p-4 bg-white border border-slate-200 rounded-lg inline-block">
               <p className="text-xs text-slate-500 mb-2 text-center">UPI QR for {form.upiId}</p>
               <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=${encodeURIComponent(form.upiId)}&pn=${encodeURIComponent(form.restaurantName || "Restaurant")}&cu=INR`}
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=${encodeURIComponent(form.upiId)}&pn=${encodeURIComponent(form.restaurantName || "Restaurant")}&cu=INR`}
                 alt="UPI QR Code"
-                width={144}
-                height={144}
+                width={192}
+                height={192}
                 loading="lazy"
-                className="w-36 h-36 mx-auto"
+                className="w-48 h-48 mx-auto"
               />
             </div>
           )}

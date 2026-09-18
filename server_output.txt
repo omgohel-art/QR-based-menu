@@ -1,0 +1,1 @@
+FATAL: Razorpay test keys detected in production! Set RAZORPAY_KEY_ID to a live key.

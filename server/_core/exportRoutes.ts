@@ -2,31 +2,22 @@ import { Router, Request, Response } from "express";
 import { getDb } from "../db";
 import { sessions, tables, menuItems, categories } from "../../drizzle/schema";
 import { eq, desc, gte, and } from "drizzle-orm";
-import { getUserIdFromToken } from "./authRoutes";
+import { getUserIdFromToken, getUserRoleAndPermissions } from "./authRoutes";
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+async function requirePermission(req: Request, res: Response, permission: string): Promise<string | null> {
   const userId = getUserIdFromToken(req);
-  if (!userId) {
-    res.status(401).json({ error: "Unauthorized" });
-    return null;
-  }
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return null; }
   try {
-    const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${userId}&select=role`, {
-      headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` },
-    });
-    const profiles = await r.json();
-    if (!profiles?.[0] || profiles[0].role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return null;
+    const { role, permissions } = await getUserRoleAndPermissions(userId);
+    if (role === "admin" || permissions[permission]) {
+      return userId;
     }
-    return userId;
-  } catch {
-    res.status(500).json({ error: "Internal server error" });
+    res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
     return null;
+  } catch {
+    res.status(500).json({ error: "Internal server error" }); return null;
   }
 }
 
@@ -43,7 +34,7 @@ function toCsv(rows: Record<string, unknown>[]): string {
 
 /** GET /api/admin/export/menu.csv */
 router.get("/api/admin/export/menu.csv", async (req: Request, res: Response) => {
-  const userId = await requireAdmin(req, res);
+  const userId = await requirePermission(req, res, "reports");
   if (!userId) return;
 
   const db = await getDb();
@@ -71,7 +62,7 @@ router.get("/api/admin/export/menu.csv", async (req: Request, res: Response) => 
 
 /** GET /api/admin/export/orders.csv?days=30 */
 router.get("/api/admin/export/orders.csv", async (req: Request, res: Response) => {
-  const userId = await requireAdmin(req, res);
+  const userId = await requirePermission(req, res, "reports");
   if (!userId) return;
 
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);

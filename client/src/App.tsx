@@ -23,6 +23,8 @@ import SetNewPassword from "./pages/SetNewPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RealtimeSubscriptions from "./components/RealtimeSubscriptions";
+import MasterAnalyticsDashboard from "./pages/analytics/MasterAnalyticsDashboard";
+import QrPosCounter from "./components/QrPosCounter";
 
 // Lazy-loaded route components for smaller initial bundle
 const CustomerMenu = lazy(() => import("./pages/CustomerMenu"));
@@ -55,6 +57,13 @@ const TableBreakdownAnalytics = lazy(() => import("./pages/analytics/TableBreakd
 const CustomerRewardsPage = lazy(() => import("./pages/rewards/CustomerRewardsPage"));
 const LuckySpinPage = lazy(() => import("./pages/spin/LuckySpinPage"));
 const MyCouponsPage = lazy(() => import("./pages/coupons/MyCouponsPage"));
+
+// Dedicated source analytics pages
+const ZomatoAnalytics = lazy(() => import("./pages/analytics/ZomatoAnalytics"));
+const SwiggyAnalytics = lazy(() => import("./pages/analytics/SwiggyAnalytics"));
+const WalkInAnalytics = lazy(() => import("./pages/analytics/WalkInAnalytics"));
+const OtherAnalytics = lazy(() => import("./pages/analytics/OtherAnalytics"));
+const DirectAnalytics = lazy(() => import("./pages/analytics/DirectAnalytics"));
 
 function Router() {
   return (
@@ -93,6 +102,25 @@ function Router() {
       <Route path={"/analytics/table-breakdown"}>
         <ProtectedRoute><TableBreakdownAnalytics /></ProtectedRoute>
       </Route>
+      <Route path={"/analytics/zomato"}>
+        <ProtectedRoute><ZomatoAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/swiggy"}>
+        <ProtectedRoute><SwiggyAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/walkin"}>
+        <ProtectedRoute><WalkInAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/other"}>
+        <ProtectedRoute><OtherAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path={"/analytics/direct"}>
+        <ProtectedRoute><DirectAnalytics /></ProtectedRoute>
+      </Route>
+      <Route path="/master-analytics">
+        <ProtectedRoute><MasterAnalyticsDashboard /></ProtectedRoute>
+      </Route>
+      <Route path="/analytics" component={NotFound} />
       <Route path={"/table/:tableCode/cart"} component={CartPage} />
       <Route path={"/table/:tableCode/payment"} component={PaymentPage} />
       <Route path={"/table/:tableCode/payment/success"} component={OrderSuccessPage} />

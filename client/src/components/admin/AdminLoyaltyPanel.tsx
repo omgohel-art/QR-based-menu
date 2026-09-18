@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import { useStaffLanguage } from "@/contexts/StaffLanguageContext";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ const DEFAULT_MILESTONES: MilestoneConfig[] = [
 
 export default function AdminLoyaltyPanel() {
   const queryClient = useQueryClient();
+  const { t: st } = useStaffLanguage();
   const [search, setSearch] = useState("");
   const [adjustModal, setAdjustModal] = useState<{ phone: string; name: string } | null>(null);
   const [adjustPoints, setAdjustPoints] = useState("");
@@ -176,14 +178,14 @@ export default function AdminLoyaltyPanel() {
     onError: () => toast.error("Failed to adjust points"),
   });
 
-  const filteredWallets = (wallets || []).filter((w: any) =>
+  const filteredWallets = (Array.isArray(wallets) ? wallets : []).filter((w: any) =>
     !search || w.customerPhone?.includes(search) || w.customerName?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const activeCoupons = (coupons || []).filter((c: any) => c.status === "active");
-  const redeemedCoupons = (coupons || []).filter((c: any) => c.status === "redeemed");
+const activeCoupons = (Array.isArray(coupons) ? coupons : []).filter((c: any) => c.status === "active");
+const redeemedCoupons = (Array.isArray(coupons) ? coupons : []).filter((c: any) => c.status === "redeemed");
 
-  const filteredCoupons = (allCoupons as any[]).filter(
+  const filteredCoupons = (Array.isArray(allCoupons) ? allCoupons : []).filter(
     (c: any) =>
       !couponSearch ||
       c.code?.toLowerCase().includes(couponSearch.toLowerCase()) ||
@@ -202,12 +204,12 @@ export default function AdminLoyaltyPanel() {
       <Card className="p-4 md:p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
         <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
           <Settings className="w-5 h-5 text-amber-600" />
-          Loyalty Settings
+          {st("loyaltySettings" as any)}
         </h2>
         <div className="space-y-4">
           <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
             <div>
-              <label className="text-sm font-medium text-slate-900 dark:text-white">Enable Loyalty System</label>
+              <label className="text-sm font-medium text-slate-900 dark:text-white">{st("enableLoyaltySystem" as any)}</label>
               <p className="text-xs text-slate-400 mt-0.5">Customers earn points on paid orders</p>
             </div>
             <button
@@ -231,7 +233,7 @@ export default function AdminLoyaltyPanel() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">Points per Coupon</label>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">{st("pointsPerCoupon" as any)}</label>
               <Input
                 type="number"
                 value={settings?.loyaltyPointsThreshold || 100}
@@ -257,7 +259,7 @@ export default function AdminLoyaltyPanel() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Trophy className="w-5 h-5 text-amber-600" />
-            Milestone Rewards
+            {st("milestoneRewards" as any)}
           </h2>
           <Button
             size="sm"
@@ -266,7 +268,7 @@ export default function AdminLoyaltyPanel() {
             className="bg-amber-600 hover:bg-amber-700 text-white"
           >
             {updateMilestoneMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-            Save
+            {st("save" as any)}
           </Button>
         </div>
         <p className="text-xs text-slate-500 mb-4">Configure what customers can redeem at each milestone</p>
@@ -296,7 +298,9 @@ export default function AdminLoyaltyPanel() {
               {milestone.enabled && (
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div>
-                    <label className="text-[10px] text-slate-400 mb-0.5 block">Lucky Spins</label>
+                    <label className="text-[10px] text-slate-400 mb-0.5 block">
+              {st("luckySpins" as any)}
+            </label>
                     <Input
                       type="number"
                       value={milestone.spins}
@@ -309,7 +313,9 @@ export default function AdminLoyaltyPanel() {
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] text-slate-400 mb-0.5 block">Coupon Discount %</label>
+                    <label className="text-[10px] text-slate-400 mb-0.5 block">
+              {st("couponDiscountPercent" as any)}
+            </label>
                     <Input
                       type="number"
                       value={milestone.couponPercent}
@@ -337,7 +343,8 @@ export default function AdminLoyaltyPanel() {
         </Card>
         <Card className="p-4 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-center">
           <Star className="w-5 h-5 text-amber-500 mx-auto mb-1" />
-          <p className="text-2xl font-bold text-amber-600">{wallets?.reduce((s: number, w: any) => s + (w.currentPoints || 0), 0) || 0}</p>
+          <p className="text-2xl font-bold text-amber-600">
+  {wallets && Array.isArray(wallets) ? wallets.reduce((s: number, w: any) => s + (w.currentPoints || 0), 0) : 0} || 0</p>
           <p className="text-xs text-slate-400">Points Issued</p>
         </Card>
         <Card className="p-4 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-center">
@@ -356,7 +363,7 @@ export default function AdminLoyaltyPanel() {
       <Card className="p-4 md:p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
         <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
           <Trophy className="w-5 h-5 text-amber-600" />
-          Customer Wallets
+          {st("customerWallets" as any)}
         </h2>
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -435,7 +442,7 @@ export default function AdminLoyaltyPanel() {
             </div>
             <Button onClick={() => adjustMutation.mutate()} disabled={!adjustPoints || adjustMutation.isPending} className="w-full">
               {adjustMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-              Save Adjustment
+              {st("saveAdjustment" as any)}
             </Button>
           </div>
         </DialogContent>
@@ -509,7 +516,7 @@ export default function AdminLoyaltyPanel() {
       <Card className="p-4 md:p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
         <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
           <Ticket className="w-5 h-5 text-green-600" />
-          Coupon Management
+          {st("couponManagement" as any)}
         </h2>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

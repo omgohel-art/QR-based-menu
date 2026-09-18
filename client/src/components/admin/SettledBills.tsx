@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ interface SettledBillsProps {
 
 export default function SettledBills({ onPrint, highlightOrderId }: SettledBillsProps) {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const { fmtPrice } = useFormatCurrency();
   const { enabled: soundEnabled, volume: soundVolume } = useSoundSettings();
   const { isOffline } = useNetworkStatus();
@@ -59,7 +61,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
   const [settleName, setSettleName] = useState("");
   const [settlePhone, setSettlePhone] = useState("");
 
-  // Note: settled bills query removed — settled bills section was removed from Orders tab.
+  // Note: settled bills query removed â€” settled bills section was removed from Orders tab.
   // queryClient.invalidateQueries({ queryKey: ['settledBills'] }) is still called after settling.
 
   const { data: activeOrders, isLoading: isLoadingOrders, refetch: refetchOrders } = useQuery({
@@ -593,7 +595,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
               </div>
             </Card>
 
-            <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
+<Card className="p-4 md:p-6 bg-white dark:bg-slate-900 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => navigate(`/#analytics?tab=analytics&source=revenue-total`)}>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">Total Revenue</p>
@@ -601,7 +603,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
                     {fmtPrice(todayRevenue || 0)}
                   </p>
                 </div>
-                <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-green-400 opacity-20" />
+                <TrendingUp className="w-8 md:w-10 h-8 md:h-10 text-green-500 opacity-20" />
               </div>
             </Card>
           </>
@@ -658,7 +660,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
                   </div>
                   {table.customerName && (
                     <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">
-                      {table.customerName}{table.customerPhone ? ` · ${table.customerPhone}` : ""}
+                      {table.customerName}{table.customerPhone ? ` Â· ${table.customerPhone}` : ""}
                     </p>
                   )}
                   <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
@@ -697,7 +699,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
                 <div className="space-y-1.5 mb-3">
                   {table.orders[table.orders.length - 1].items.map((item: any) => (
                     <div key={item.id} className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-slate-900 dark:text-white">{item.quantity}× {item.menuItemName}</span>
+                      <span className="font-medium text-slate-900 dark:text-white">{item.quantity}Ã— {item.menuItemName}</span>
                       <span className="text-slate-600 dark:text-slate-400">{fmtPrice(item.priceAtOrderTime * item.quantity)}</span>
                     </div>
                   ))}
@@ -716,7 +718,7 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
                   <div className="space-y-0.5">
                     {table.oldestPendingOrder.items.map((item: any) => (
                       <div key={item.id} className="flex justify-between text-xs text-blue-900 dark:text-blue-300">
-                        <span>{item.quantity}× {item.menuItemName}</span>
+                        <span>{item.quantity}Ã— {item.menuItemName}</span>
                         <span>{fmtPrice(item.priceAtOrderTime * item.quantity)}</span>
                       </div>
                     ))}
@@ -1001,3 +1003,4 @@ export default function SettledBills({ onPrint, highlightOrderId }: SettledBills
     </>
   );
 }
+

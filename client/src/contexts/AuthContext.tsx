@@ -35,15 +35,40 @@ interface UserProfile {
   updatedAt: string;
 }
 
+interface StaffPermissions {
+  orders: boolean;
+  tables: boolean;
+  menu: boolean;
+  analytics: boolean;
+  inventory: boolean;
+  customers: boolean;
+  staffManagement: boolean;
+  bookings: boolean;
+  reports: boolean;
+  settings: boolean;
+  externalOrders: boolean;
+  payments: boolean;
+}
+
+const ALL_PERMISSIONS: StaffPermissions = {
+  orders: true, tables: true, menu: true, analytics: true,
+  inventory: true, customers: true, staffManagement: true,
+  bookings: true, reports: true, settings: true,
+  externalOrders: true, payments: true,
+};
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
+  permissions: StaffPermissions;
   loading: boolean;
+  isAdmin: boolean;
   login: (email: string, password: string) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   updatePassword: (password: string, setMustChangeFalse?: boolean) => Promise<{ error?: string }>;
   updateProfile: (updates: Partial<Pick<UserProfile, "profile_image_url" | "name" | "phone" | "language" | "timezone" | "notif_order" | "notif_system" | "notif_email">>) => Promise<{ error?: string }>;
   refreshProfile: () => Promise<void>;
+  hasPermission: (key: keyof StaffPermissions) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -51,6 +76,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [permissions, setPermissions] = useState<StaffPermissions>(ALL_PERMISSIONS);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async (userId: string) => {
@@ -62,11 +88,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(data || null);
   }, []);
 
+  const fetchPermissions = useCallback(async (userId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setPermissions(ALL_PERMISSIONS);
+        return;
+      }
+      const res = await fetch(`/api/auth/staff-permissions/${userId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.permissions) {
+        setPermissions({
+          orders: data.permissions.orders ?? true,
+          tables: data.permissions.tables ?? true,
+          menu: data.permissions.menu ?? true,
+          analytics: data.permissions.analytics ?? true,
+          inventory: data.permissions.inventory ?? true,
+          customers: data.permissions.customers ?? true,
+          staffManagement: data.permissions.staffManagement ?? true,
+          bookings: data.permissions.bookings ?? true,
+          reports: data.permissions.reports ?? true,
+          settings: data.permissions.settings ?? true,
+          externalOrders: data.permissions.externalOrders ?? true,
+          payments: data.permissions.payments ?? true,
+        });
+      } else {
+        setPermissions(ALL_PERMISSIONS);
+      }
+    } catch {
+      setPermissions(ALL_PERMISSIONS);
+    }
+  }, []);
+
   const refreshProfile = useCallback(async () => {
     if (user) {
       await fetchProfile(user.id);
+      await fetchPermissions(user.id);
     }
-  }, [user, fetchProfile]);
+  }, [user, fetchProfile, fetchPermissions]);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -74,8 +135,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (u) {
         await fetchProfile(u.id);
+        await fetchPermissions(u.id);
       } else {
         setProfile(null);
+        setPermissions(ALL_PERMISSIONS);
       }
       setLoading(false);
     });
@@ -85,13 +148,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (u) {
         await fetchProfile(u.id);
+        await fetchPermissions(u.id);
       } else {
         setProfile(null);
+        setPermissions(ALL_PERMISSIONS);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchProfile]);
+  }, [fetchProfile, fetchPermissions]);
+
+  const hasPermission = useCallback((key: keyof StaffPermissions): boolean => {
+    // Admin always has full access
+    if (profile?.role === "admin") return true;
+    return permissions[key] ?? true;
+  }, [profile, permissions]);
 
   const login = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -135,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, refreshProfile]);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, logout, updatePassword, updateProfile, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, permissions, loading, isAdmin: profile?.role === "admin", login, logout, updatePassword, updateProfile, refreshProfile, hasPermission }}>
       {children}
     </AuthContext.Provider>
   );

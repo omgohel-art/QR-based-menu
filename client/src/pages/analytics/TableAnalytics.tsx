@@ -70,7 +70,7 @@ export default function TableAnalytics() {
     <AnalyticsDrillDown
       title="Table Analytics"
       icon={<Users className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Tables" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Tables" }]}
       search={search} onSearchChange={setSearch}
       onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

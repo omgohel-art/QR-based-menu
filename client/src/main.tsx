@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { NetworkStatusProvider } from "./contexts/NetworkStatusContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,7 +15,9 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
-    <App />
+    <NetworkStatusProvider>
+      <App />
+    </NetworkStatusProvider>
   </QueryClientProvider>
 );
 

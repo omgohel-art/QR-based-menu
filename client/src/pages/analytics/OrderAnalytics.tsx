@@ -70,7 +70,7 @@ export default function OrderAnalytics() {
     <AnalyticsDrillDown
       title="Order Analytics"
       icon={<ShoppingCart className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Orders" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Orders" }]}
       search={search} onSearchChange={setSearch}
       onExport={handleExport} onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

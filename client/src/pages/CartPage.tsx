@@ -16,6 +16,7 @@ import BillSplitModal from "@/components/BillSplitModal";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useLoyalty, useLoyaltyTiers, useSpinStatus, calculatePoints, getNextMilestone, getCurrentTierPoints, type LoyaltyCoupon } from "@/hooks/useLoyalty";
 import { useDoubleSubmitGuard } from "@/hooks/useDoubleSubmitGuard";
+import { printKOTDirect } from "@/lib/printerService";
 
 export default function CartPage() {
   const [, params] = useRoute("/table/:tableCode/cart");
@@ -298,6 +299,29 @@ export default function CartPage() {
     },
     onSuccess: (_data, variables) => {
       clearCart();
+      // Auto-print KOT if enabled in localStorage
+      try {
+        if (localStorage.getItem("autoPrintKOTEnabled") === "true") {
+          const kotPayload = {
+            orderNumber: _data?.orderNumber ?? variables?.submissionId,
+            table: variables?.tableCode || "Dine-In",
+            type: "DINE-IN",
+            date: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+            time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }),
+            items: (variables?.items || []).map((it: any) => ({
+              name: it.name || "Unknown Item",
+              qty: it.quantity || 1,
+            })),
+          };
+          printKOTDirect(kotPayload, true).then(() => {
+            // Silent print - no toast unless it fails
+          }).catch((err) => {
+            console.error("Auto-KOT print failed:", err);
+          });
+        }
+      } catch (e) {
+        console.error("Auto-KOT setup error:", e);
+      }
       queryClient.invalidateQueries({ queryKey: ["cartSession", tableCode] });
       queryClient.invalidateQueries({ queryKey: ["loyalty", customerPhone] });
       queryClient.invalidateQueries({ queryKey: ["spinStatus", customerPhone] });
@@ -1149,6 +1173,12 @@ export default function CartPage() {
         orderNumber={successOrderNumber}
         tableLabel={session?.tableLabel}
         total={successTotal}
+        items={cart.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        }))}
+        subtotal={cartTotal}
         onContinue={dismissSuccessModal}
         onViewOrder={dismissSuccessModal}
       />

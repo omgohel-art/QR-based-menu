@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, Check, X, Trash2, Loader2, Users, Phone, Clock, BookOpen, RefreshCw } from "lucide-react";
+import { Calendar, Check, X, Trash2, Loader2, Users, Phone, Clock, BookOpen, RefreshCw, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 type Reservation = {
@@ -42,6 +42,7 @@ export default function ReservationsPanel() {
   const queryClient = useQueryClient();
   const [filterDate, setFilterDate] = useState(todayStr());
   const [filterStatus, setFilterStatus] = useState<string>("");
+  const [isCreating, setIsCreating] = useState(false);
 
   const { data: reservations, isLoading } = useQuery<Reservation[]>({
     queryKey: ["reservations", filterDate, filterStatus],
@@ -94,6 +95,33 @@ export default function ReservationsPanel() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const handleCreate = async (data: {
+    customerName: string;
+    customerPhone: string;
+    date: string;
+    time: string;
+    pax: number;
+    notes?: string;
+  }) => {
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session?.session?.access_token;
+      const res = await fetch("/api/admin/reservations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to create reservation");
+      const result = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      toast.success("Reservation created");
+      setIsCreating(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create reservation");
+      setIsCreating(false);
+    }
+  };
+
   return (
     <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
@@ -135,16 +163,123 @@ export default function ReservationsPanel() {
           <RefreshCw className="w-3.5 h-3.5" />
           Refresh
         </Button>
+
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => setIsCreating(true)}
+        >
+          <Plus className="w-3.5 h-3.5" /> Reserve Table
+        </Button>
       </div>
 
-      {isLoading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg animate-pulse">
-              <div className="h-4 w-32 bg-slate-200 dark:bg-slate-700 rounded mb-2" />
-              <div className="h-3 w-24 bg-slate-200 dark:bg-slate-700 rounded" />
+      {isCreating ? (
+        <div className="mt-6 bg-slate-50 dark:bg-slate-800 rounded-lg p-6 max-w-md">
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6">Reserve a Table</h3>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target as HTMLFormElement);
+              const data = {
+                customerName: formData.get("customerName") as string,
+                customerPhone: formData.get("customerPhone") as string,
+                date: formData.get("date") as string,
+                time: formData.get("time") as string,
+                pax: Number(formData.get("pax")),
+                notes: formData.get("notes") as string,
+              };
+              handleCreate(data);
+            }}
+          >
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                  Customer Name *
+                </label>
+                <input
+                  type="text"
+                  name="customerName"
+                  required
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-transparent"
+                  placeholder="e.g. John Doe"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                  Phone *
+                </label>
+                <input
+                  type="tel"
+                  name="customerPhone"
+                  required
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-transparent"
+                  placeholder="e.g. +62 812 3456 7890"
+                />
+              </div>
             </div>
-          ))}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                  Date *
+                </label>
+                <input
+                  type="date"
+                  name="date"
+                  required
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                  Time *
+                </label>
+                <input
+                  type="time"
+                  name="time"
+                  required
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-transparent"
+                  value="12:00"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                Guests (pax) *
+              </label>
+              <input
+                type="number"
+                name="pax"
+                min="1"
+                required
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-transparent"
+                value="2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                Notes
+              </label>
+              <textarea
+                name="notes"
+                rows={2}
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 focus-border-none resize-none"
+                placeholder="Special requests or occasions..."
+              ></textarea>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCreating(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="default" size="sm">
+                Create Reservation
+              </Button>
+            </div>
+          </form>
         </div>
       ) : !reservations || reservations.length === 0 ? (
         <div className="text-center py-12 text-slate-500 dark:text-slate-400">

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNetworkStatus } from "@/contexts/NetworkStatusContext";
-import { listQueued, deleteQueued, incrementRetry, queueSize } from "@/lib/offlineQueue";
+import { getPendingOfflineCount, syncOfflineQueue, queueOfflineOrder } from "@/lib/offlineQueue";
 import { toast } from "sonner";
 
 interface SyncResult {
@@ -8,17 +8,32 @@ interface SyncResult {
   failed: number;
 }
 
+interface OfflineOrderPayload {
+  tableCode: string;
+  items: Array<{
+    menuItemId: number;
+    name: string;
+    price: number;
+    quantity: number;
+    variantSelections?: any;
+    specialInstructions?: string;
+  }>;
+  customerName?: string;
+  customerPhone?: string;
+  paymentMethod?: string;
+}
+
 // Drains the IndexedDB order queue when the browser comes back online.
 // Returns the number of orders successfully synced.
 export function useOfflineOrderQueue() {
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, pendingCount, syncQueue } = useNetworkStatus();
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const n = await queueSize();
-      setPending(n);
+      const counts = await getPendingOfflineCount();
+      setPending(counts.orders);
     } catch {
       /* IDB not available */
     }
@@ -29,34 +44,18 @@ export function useOfflineOrderQueue() {
     setSyncing(true);
     const result: SyncResult = { synced: 0, failed: 0 };
     try {
-      const items = await listQueued();
-      for (const item of items) {
-        if (item.id == null) continue;
-        try {
-          const res = await fetch("/api/order/submit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(item.payload),
-          });
-          if (res.ok) {
-            await deleteQueued(item.id);
-            result.synced += 1;
-          } else {
-            const err = (await res.json().catch(() => ({}))).error || `HTTP ${res.status}`;
-            await incrementRetry(item.id, err);
-            result.failed += 1;
-          }
-        } catch (err: any) {
-          await incrementRetry(item.id, err?.message || "network error");
-          result.failed += 1;
-        }
-      }
+      // Trigger sync via NetworkStatusContext
+      await syncQueue();
+      const counts = await getPendingOfflineCount();
+      setPending(counts.orders);
+      result.synced = 1;
+    } catch (err: any) {
+      result.failed = 1;
     } finally {
       setSyncing(false);
-      await refresh();
     }
     return result;
-  }, [isOnline, refresh]);
+  }, [isOnline]);
 
   useEffect(() => {
     refresh();
@@ -83,5 +82,5 @@ export function useOfflineOrderQueue() {
     };
   }, [isOnline, drain]);
 
-  return { pending, syncing, drain, refresh };
+  return { pending, syncing, drain, refresh, enqueueOrder: queueOfflineOrder };
 }

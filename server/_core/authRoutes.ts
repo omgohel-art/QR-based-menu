@@ -96,6 +96,48 @@ export function getUserIdFromToken(req: any): string | null {
   }
 }
 
+function getPermissionsForRole(role: string): { orders: boolean; tables: boolean; menu: boolean; analytics: boolean; inventory: boolean; customers: boolean; staffManagement: boolean; bookings: boolean; reports: boolean; settings: boolean; externalOrders: boolean; payments: boolean } {
+    if (role === "admin") {
+      return {
+        orders: true, tables: true, menu: true, analytics: true,
+        inventory: true, customers: true, staffManagement: true,
+        bookings: true, reports: true, settings: true,
+        externalOrders: true, payments: true,
+      };
+    }
+    // Staff role - limited permissions
+    return {
+      orders: true, tables: true, menu: true, analytics: false,
+      inventory: false, customers: false, staffManagement: false,
+      bookings: false, reports: false, settings: false,
+      externalOrders: false, payments: false,
+    };
+  }
+
+export function getUserRoleAndPermissions(authUserId: string): Promise<{ role: string; permissions: { orders: boolean; tables: boolean; menu: boolean; analytics: boolean; inventory: boolean; customers: boolean; staffManagement: boolean; bookings: boolean; reports: boolean; settings: boolean; externalOrders: boolean; payments: boolean } } | null> {
+  return new Promise(async (resolve) => {
+    try {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${authUserId}&select=role`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) {
+        resolve(null);
+        return;
+      }
+      const profileData = await r.json();
+      const role = profileData?.[0]?.role || "staff";
+      
+      const permissions = getPermissionsForRole(role);
+      
+      resolve({ role, permissions });
+    } catch (err) {
+      console.error("[getUserRoleAndPermissions] Error:", err);
+      resolve(null);
+    }
+  });
+}
+
 function validateJwtClaims(payloadStr: string): string | null {
   try {
     const payload = JSON.parse(payloadStr);
@@ -1752,6 +1794,420 @@ router.get("/api/auth/pin-login/:pin", async (req, res) => {
   } catch (err: unknown) {
     console.error("pin-login error:", err instanceof Error ? err.message : err);
     return res.status(500).json({ error: "PIN login failed" });
+  }
+});
+
+// ── Table Transfer / Merge / Split (Admin only) ──
+router.post("/api/tables/transfer", async (req, res) => {
+  try {
+    const { fromTableCode, toTableCode } = req.body as { fromTableCode: string; toTableCode: string };
+    if (!fromTableCode || !toTableCode) {
+      return res.status(400).json({ error: "From and to table codes are required" });
+    }
+    if (fromTableCode === toTableCode) {
+      return res.status(400).json({ error: "From and to tables must be different" });
+    }
+
+    const callerId = getUserIdFromToken(req);
+    if (!callerId) return res.status(401).json({ error: "Invalid token" });
+
+    const profileRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${callerId}&select=role`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Profile lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+    if (!profileRes) return res.status(503).json({ error: "Service unavailable" });
+    const profileData = await profileRes.json();
+    if (profileData[0]?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can transfer tables" });
+    }
+
+    const fromTableRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?tableCode=eq.${fromTableCode}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Table lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const toTableRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?tableCode=eq.${toTableCode}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Table lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    if (!fromTableRes || !toTableRes) return res.status(404).json({ error: "Table not found" });
+
+    const fromTable = (await fromTableRes.json())[0];
+    const toTable = (await toTableRes.json())[0];
+
+    if (!fromTable || !toTable) return res.status(404).json({ error: "Table not found" });
+
+    const fromSessionRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?tableId=eq.${fromTable.id}&status=eq.open`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Session lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const fromSession = fromSessionRes ? (await fromSessionRes.json())[0] : null;
+
+    if (!fromSession) {
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${fromTable.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${toTable.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      return res.json({ success: true, message: "Tables cleared (no active sessions)" });
+    }
+
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?id=eq.${fromSession.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ tableId: toTable.id }) }
+      ).catch(() => null);
+    });
+
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?id=eq.${fromTable.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+      ).catch(() => null);
+    });
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?id=eq.${toTable.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "active" }) }
+      ).catch(() => null);
+    });
+
+    return res.json({ 
+      success: true, 
+      message: `Table ${fromTable.label} transferred to ${toTable.label}`,
+      sessionId: fromSession.id,
+      newTableLabel: toTable.label
+    });
+  } catch (err: unknown) {
+    console.error("table-transfer error:", err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: "Failed to transfer table" });
+  }
+});
+
+router.post("/api/tables/merge", async (req, res) => {
+  try {
+    const { tableCode1, tableCode2 } = req.body as { tableCode1: string; tableCode2: string };
+    if (!tableCode1 || !tableCode2) {
+      return res.status(400).json({ error: "Both table codes are required" });
+    }
+    if (tableCode1 === tableCode2) {
+      return res.status(400).json({ error: "Cannot merge a table with itself" });
+    }
+
+    const callerId = getUserIdFromToken(req);
+    if (!callerId) return res.status(401).json({ error: "Invalid token" });
+
+    const profileRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${callerId}&select=role`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Profile lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+    if (!profileRes) return res.status(503).json({ error: "Service unavailable" });
+    const profileData = await profileRes.json();
+    if (profileData[0]?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can merge tables" });
+    }
+
+    const table1Res = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?tableCode=eq.${tableCode1}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Table lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const table2Res = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?tableCode=eq.${tableCode2}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Table lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    if (!table1Res || !table2Res) return res.status(404).json({ error: "One or both tables not found" });
+
+    const table1 = (await table1Res.json())[0];
+    const table2 = (await table2Res.json())[0];
+
+    if (!table1 || !table2) return res.status(404).json({ error: "Tables not found" });
+
+    const s1Res = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?tableId=eq.${table1.id}&status=eq.open`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Session lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const s2Res = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?tableId=eq.${table2.id}&status=eq.open`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Session lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const session1 = s1Res ? (await s1Res.json())[0] : null;
+    const session2 = s2Res ? (await s2Res.json())[0] : null;
+
+    if (!session1 && !session2) {
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table1.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table2.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      return res.json({ success: true, message: "Both tables cleared (no active sessions)" });
+    }
+
+    if (!session1) {
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/sessions?id=eq.${session2.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ tableId: table1.id }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table1.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "active" }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table2.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      return res.json({ success: true, message: `Session transferred from Table ${table2.label} to Table ${table1.label}` });
+    }
+
+    if (!session2) {
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/sessions?id=eq.${session1.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ tableId: table2.id }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table2.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "active" }) }
+        ).catch(() => null);
+      });
+      await fire(supabaseBreaker, async () => {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/tables?id=eq.${table1.id}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+        ).catch(() => null);
+      });
+      return res.json({ success: true, message: `Session transferred from Table ${table1.label} to Table ${table2.label}` });
+    }
+
+    const newerSession = session1.submittedAt > session2.submittedAt ? session1 : session2;
+    const olderSession = newerSession === session1 ? session2 : session1;
+
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?id=eq.${olderSession.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "settled", settledAt: new Date().toISOString() }) }
+      ).catch(() => null);
+    });
+
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?id=eq.${newerSession.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ tableId: table1.id, status: "active" }) }
+      ).catch(() => null);
+    });
+
+    await fire(supabaseBreaker, async () => {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?id=eq.${table2.id}`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ status: "empty" }) }
+      ).catch(() => null);
+    });
+
+    return res.json({ 
+      success: true, 
+      message: `Tables merged: ${table1.label} (kept) + ${table2.label} (settled)`,
+      keptSessionId: newerSession.id,
+      settledSessionId: olderSession.id
+    });
+  } catch (err: unknown) {
+    console.error("table-merge error:", err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: "Failed to merge tables" });
+  }
+});
+
+router.post("/api/tables/split-bill", async (req, res) => {
+  try {
+    const { tableCode, splitMethod, splitCount } = req.body as {
+      tableCode: string;
+      splitMethod: "equal" | "custom";
+      splitCount?: number;
+    };
+    if (!tableCode) return res.status(400).json({ error: "Table code is required" });
+    if (!splitMethod) return res.status(400).json({ error: "Split method is required" });
+
+    const callerId = getUserIdFromToken(req);
+    if (!callerId) return res.status(401).json({ error: "Invalid token" });
+
+    const profileRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${callerId}&select=role`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Profile lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+    if (!profileRes) return res.status(503).json({ error: "Service unavailable" });
+    const profileData = await profileRes.json();
+    if (profileData[0]?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can split bills" });
+    }
+
+    const tableRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/tables?tableCode=eq.${tableCode}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Table lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    if (!tableRes) return res.status(404).json({ error: "Table not found" });
+
+    const table = (await tableRes.json())[0];
+    if (!table) return res.status(404).json({ error: "Table not found" });
+
+    const sessionRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/sessions?tableId=eq.${table.id}&status=eq.open`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Session lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const session = sessionRes ? (await sessionRes.json())[0] : null;
+    if (!session) return res.status(404).json({ error: "No active session for this table" });
+
+    const ordersRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/orders?sessionId=eq.${session.id}`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Orders lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const orders = ordersRes ? await ordersRes.json() : [];
+    if (orders.length === 0) return res.status(400).json({ error: "No orders found for this session" });
+
+    const orderIds = orders.map((o: any) => o.id);
+    const itemsRes = await fire(supabaseBreaker, async () => {
+      const r = await fetch(
+        `${SUPABASE_URL}/rest/v1/orderItems?orderId=in.(${orderIds.join(",")})`,
+        { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY } }
+      );
+      if (!r.ok) throw new Error(`Order items lookup failed: ${r.status}`);
+      return r;
+    }).catch(() => null);
+
+    const allItems = itemsRes ? await itemsRes.json() : [];
+
+    const orderTotals = orders.map((o: any) => {
+      const orderItems = allItems.filter((i: any) => i.orderId === o.id);
+      const subtotal = orderItems.reduce((acc: number, i: any) => acc + (parseFloat(i.priceAtOrderTime?.toString() || "0") * i.quantity), 0);
+      return {
+        orderId: o.id,
+        orderNumber: o.orderNumber,
+        subtotal,
+        items: orderItems.map((i: any) => ({
+          id: i.id,
+          menuItemName: i.menuItemId ? "Item" : "Unknown",
+          quantity: i.quantity,
+          priceAtOrderTime: parseFloat(i.priceAtOrderTime?.toString() || "0"),
+        })),
+      };
+    });
+
+    if (splitMethod === "equal") {
+      if (!splitCount || splitCount <= 0) {
+        return res.status(400).json({ error: "Valid split count is required for equal split" });
+      }
+      const totalAmount = orderTotals.reduce((acc: number, o: any) => acc + o.subtotal, 0);
+      const perPerson = totalAmount / splitCount;
+      
+      const splitOrders: any[] = [];
+      for (let i = 0; i < splitCount; i++) {
+        splitOrders[i] = {
+          person: i + 1,
+          amount: Math.round(perPerson * 100) / 100,
+          orders: [] as any[],
+        };
+      }
+      
+      orderTotals.forEach((ot: any, idx: number) => {
+        splitOrders[idx % splitCount].orders.push(ot.orderNumber);
+      });
+      
+      return res.json({ 
+        success: true, 
+        method: "equal",
+        totalAmount: Math.round(totalAmount * 100) / 100,
+        perPerson: Math.round(perPerson * 100) / 100,
+        splitOrders,
+      });
+    } else {
+      return res.json({ 
+        success: true, 
+        method: "custom",
+        message: "Custom split method selected - specify amounts per person at billing",
+      });
+    }
+  } catch (err: unknown) {
+    console.error("split-bill error:", err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: "Failed to split bill" });
   }
 });
 

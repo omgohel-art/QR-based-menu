@@ -79,7 +79,7 @@ export default function RevenueAnalytics() {
     <AnalyticsDrillDown
       title="Revenue Analytics"
       icon={<IndianRupee className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Revenue" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Revenue" }]}
       search={search} onSearchChange={setSearch}
       onExport={handleExport} onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

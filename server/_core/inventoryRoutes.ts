@@ -2,11 +2,11 @@ import { Router, Request, Response } from "express";
 import { getDb } from "../db";
 import { inventoryItems, inventoryHistory } from "../../drizzle/schema";
 import { eq, and, desc, sql, like, or, lte, gte, count } from "drizzle-orm";
-import { getUserIdFromToken } from "./authRoutes";
+import { getUserIdFromToken, getUserRoleAndPermissions, verifyJwtAsync } from "./authRoutes";
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+async function requirePermission(req: Request, res: Response, permission: string): Promise<string | null> {
   // First sync check (covers HS256 + populates pending fields for ES256/RSA).
   let userId = getUserIdFromToken(req);
   if (!userId) {
@@ -16,7 +16,6 @@ async function requireAdmin(req: Request, res: Response): Promise<string | null>
   }
   // For ES256/RSA tokens, sync path skipped signature verification; do it now.
   if ((req as any)._pendingJwtAlg) {
-    const { verifyJwtAsync } = await import("./authRoutes");
     const verified = await verifyJwtAsync(req);
     if (!verified) {
       console.warn(`[inventory auth] JWT signature verification failed for ${req.method} ${req.path}`);
@@ -25,20 +24,14 @@ async function requireAdmin(req: Request, res: Response): Promise<string | null>
     }
   }
   try {
-    const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${userId}&select=role,name`, {
-      headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` },
-    });
-    const profiles = await r.json();
-    if (!profiles?.[0] || !["admin", "staff"].includes(profiles[0].role)) {
-      console.warn(`[inventory auth] userId=${userId} has no admin/staff profile (got: ${JSON.stringify(profiles?.[0] || {})})`);
-      res.status(403).json({ error: "Admin or staff access required" });
-      return null;
+    const { role, permissions } = await getUserRoleAndPermissions(userId);
+    if (role === "admin" || permissions[permission]) {
+      return userId;
     }
-    return userId;
+    res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
+    return null;
   } catch (err) {
-    console.error("[inventory auth] profile fetch failed:", err);
+    console.error("[inventory auth] error:", err);
     res.status(500).json({ error: "Internal server error" });
     return null;
   }
@@ -64,7 +57,7 @@ async function getUserName(userId: string): Promise<string> {
  */
 router.get("/api/inventory/dashboard", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -115,7 +108,7 @@ router.get("/api/inventory/dashboard", async (req: Request, res: Response) => {
  */
 router.get("/api/inventory/items", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -186,7 +179,7 @@ router.get("/api/inventory/items", async (req: Request, res: Response) => {
  */
 router.get("/api/inventory/items/:id", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -212,7 +205,7 @@ router.get("/api/inventory/items/:id", async (req: Request, res: Response) => {
 router.post("/api/inventory/items", async (req: Request, res: Response) => {
   try {
     console.log(`[inventory POST /items] body.name="${req.body?.name}" authHeader=${req.headers.authorization ? req.headers.authorization.substring(0, 20) + "..." : "MISSING"}`);
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -284,7 +277,7 @@ router.post("/api/inventory/items", async (req: Request, res: Response) => {
  */
 router.put("/api/inventory/items/:id", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -335,7 +328,7 @@ router.put("/api/inventory/items/:id", async (req: Request, res: Response) => {
  */
 router.delete("/api/inventory/items/:id", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -361,7 +354,7 @@ router.delete("/api/inventory/items/:id", async (req: Request, res: Response) =>
  */
 router.post("/api/inventory/adjust", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();
@@ -429,7 +422,7 @@ router.post("/api/inventory/adjust", async (req: Request, res: Response) => {
  */
 router.get("/api/inventory/history", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "inventory");
     if (!userId) return;
 
     const db = await getDb();

@@ -6,34 +6,24 @@ import { Router, Request, Response } from "express";
 import { getDb } from "../db";
 import { businessSettings, dailySummaries } from "../../drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
-import { getUserIdFromToken } from "./authRoutes";
+import { getUserIdFromToken, getUserRoleAndPermissions } from "./authRoutes";
 import { sendNow } from "./dailySummaryJob";
 import { computeDailySummary, formatSummaryForWhatsApp } from "./whatsappService";
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+async function requirePermission(req: Request, res: Response, permission: string): Promise<string | null> {
   const userId = getUserIdFromToken(req);
-  if (!userId) {
-    res.status(401).json({ error: "Unauthorized" });
-    return null;
-  }
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return null; }
   try {
-    const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-    const r = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${userId}&select=role`,
-      { headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` } }
-    );
-    const profiles = await r.json();
-    if (!profiles?.[0] || profiles[0].role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return null;
+    const { role, permissions } = await getUserRoleAndPermissions(userId);
+    if (role === "admin" || permissions[permission]) {
+      return userId;
     }
-    return userId;
-  } catch {
-    res.status(500).json({ error: "Internal server error" });
+    res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
     return null;
+  } catch {
+    res.status(500).json({ error: "Internal server error" }); return null;
   }
 }
 
@@ -43,7 +33,7 @@ async function requireAdmin(req: Request, res: Response): Promise<string | null>
  */
 router.get("/api/whatsapp/settings", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "settings");
     if (!userId) return;
 
     const db = await getDb();
@@ -82,7 +72,7 @@ router.get("/api/whatsapp/settings", async (req: Request, res: Response) => {
  */
 router.put("/api/whatsapp/settings", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "settings");
     if (!userId) return;
 
     const db = await getDb();
@@ -134,7 +124,7 @@ router.put("/api/whatsapp/settings", async (req: Request, res: Response) => {
  */
 router.post("/api/whatsapp/send-test", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "settings");
     if (!userId) return;
 
     const db = await getDb();
@@ -182,7 +172,7 @@ router.post("/api/whatsapp/send-test", async (req: Request, res: Response) => {
  */
 router.get("/api/whatsapp/summary-preview", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "settings");
     if (!userId) return;
 
     const summary = await computeDailySummary();
@@ -200,7 +190,7 @@ router.get("/api/whatsapp/summary-preview", async (req: Request, res: Response) 
  */
 router.get("/api/whatsapp/history", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "settings");
     if (!userId) return;
 
     const db = await getDb();

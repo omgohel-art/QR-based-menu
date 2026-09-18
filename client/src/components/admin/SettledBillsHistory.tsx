@@ -198,7 +198,7 @@ export default function SettledBillsHistory() {
             Yesterday
           </Button>
 
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[150px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <Input
               placeholder="Search by table, customer, or bill #..."

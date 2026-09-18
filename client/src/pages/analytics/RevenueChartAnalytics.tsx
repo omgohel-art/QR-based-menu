@@ -64,7 +64,7 @@ export default function RevenueChartAnalytics() {
     <AnalyticsDrillDown
       title="Revenue Dashboard"
       icon={<BarChart3 className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Revenue Chart" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Revenue Chart" }]}
       onExport={handleExport} onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}
     >

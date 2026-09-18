@@ -9,10 +9,11 @@ import {
 } from "@/components/ui/dialog";
 import {
   Users, Lock, Eye, EyeOff, Loader2, Shield, ShieldCheck,
-  Mail, UserPlus, UserMinus, UserCheck, Search,
+  Mail, UserPlus, UserMinus, UserCheck, Search, Shield as ShieldIcon,
 } from "lucide-react";
 import { StaffListSkeleton } from "@/components/Skeletons";
 import { toast } from "sonner";
+import StaffAccessPermissions from "./StaffAccessPermissions";
 
 interface StaffMember {
   id: string;
@@ -74,6 +75,9 @@ export default function StaffManagement({ onNavigate }: Props) {
   // Deactivate state
   const [deactivating, setDeactivating] = useState<string | null>(null);
   const [confirmDeactivate, setConfirmDeactivate] = useState<StaffMember | null>(null);
+
+  // Permissions modal state
+  const [permissionsTarget, setPermissionsTarget] = useState<StaffMember | null>(null);
 
   const strength = getStrength(newPassword);
 
@@ -289,20 +293,31 @@ export default function StaffManagement({ onNavigate }: Props) {
                           Set Password
                         </Button>
                         {s.role !== "admin" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setConfirmDeactivate(s)}
-                            disabled={deactivating === s.id}
-                            className="gap-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 border-red-200 dark:border-red-800"
-                          >
-                            {deactivating === s.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <UserMinus className="w-3.5 h-3.5" />
-                            )}
-                            Deactivate
-                          </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setPermissionsTarget(s)}
+                              className="gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 border-blue-200 dark:border-blue-800"
+                            >
+                              <ShieldIcon className="w-3.5 h-3.5" />
+                              Permissions
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setConfirmDeactivate(s)}
+                              disabled={deactivating === s.id}
+                              className="gap-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 border-red-200 dark:border-red-800"
+                            >
+                              {deactivating === s.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <UserMinus className="w-3.5 h-3.5" />
+                              )}
+                              Deactivate
+                            </Button>
+                          </>
                         )}
                         <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
                           Last login: {formatDate(s.lastSignIn)}
@@ -583,6 +598,16 @@ export default function StaffManagement({ onNavigate }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Staff Access & Permissions Modal */}
+      <StaffAccessPermissions
+        open={permissionsTarget !== null}
+        onClose={() => setPermissionsTarget(null)}
+        staff={permissionsTarget}
+        onPermissionsUpdated={() => {
+          fetchStaff();
+        }}
+      />
     </div>
   );
 }

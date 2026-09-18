@@ -627,23 +627,181 @@ export default function CustomerMenu() {
                 </span>
               </div>
             </div>
-            <div className="flex items-end justify-between mb-2">
+            {/* Rewards Section */}
+        {verifiedPhone && wallet && (
+          <Card className="p-4 bg-white dark:bg-slate-900 shadow-sm border-0 mb-3">
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <p className="text-2xl font-bold text-[#C08A4D]" style={{ fontFamily: "var(--font-caveat)" }}>{wallet.currentPoints}</p>
-                <p className="text-[11px] text-[#8B7E72]">Points</p>
+                <p className="text-sm text-slate-500">Loyalty Points</p>
+                <p className="text-xl font-bold text-amber-600">{wallet.currentPoints}</p>
               </div>
-              <p className="text-[11px] text-[#8B7E72] text-right">
-                {pointsToNext} more to unlock {nextReward}% OFF
-              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate(`/table/${tableCode}/rewards`)}
+                className="text-amber-600 hover:text-amber-700 text-xs"
+              >
+                View All Rewards
+              </Button>
             </div>
-            <div className="h-2 bg-amber-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-amber-400 to-orange-400 rounded-full transition-all duration-500"
-                style={{ width: `${Math.max(progressPercent, 2)}%` }}
-              />
-            </div>
-          </button>
-        ) : (
+
+            {/* Milestone Rewards Available */}
+            {wallet.milestones && wallet.milestones.length > 0 && (
+              <div className="space-y-2">
+                {wallet.milestones.map((m: any) => {
+                  const isRedeemed = m.redeemed;
+                  const isReached = m.reached;
+                  const { points, spins, couponPercent } = m;
+                  const canAfford = (wallet.currentPoints || 0) >= points;
+
+                  /* Determine if this milestone is available for redemption:
+                     - Milestone is reached (customer has enough lifetime points)
+                     - Milestone has not been redeemed yet
+                     - Customer has enough current points to deduct */
+                  const isAvailableForRedeem = isReached && !isRedeemed && canAfford;
+
+                  return (
+                    <div
+                      key={points}
+                      className={`p-3 rounded-lg border ${isRedeemed ? "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800/30" : isReached && !isRedeemed && !canAfford ? "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-800/30" : isAvailableForRedeem ? "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800/30" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${isRedeemed ? "bg-green-100 text-green-600" : isAvailableForRedeem ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-500"}`}>
+                            {isRedeemed ? "✓" : points}
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-slate-900 dark:text-white">{points} Points</p>
+                            {isRedeemed && (
+                              <p className="text-[10px] text-green-600">
+                                {m.rewardType === "spins" ? `${m.spinsAwarded} spins` : `${m.couponPercent}% coupon`}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Progress bar for not-yet-reached milestones */}
+                        {!isReached && (
+                          <div className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-400 rounded-full"
+                              style={{ width: `${Math.min(100, ((wallet.lifetimeEarned || 0) / points) * 100)}%` }}
+                            />
+                          </div>
+                        )}
+
+                        {/* Redeem buttons for available milestones */}
+                        {isAvailableForRedeem && (
+                          <div className="flex gap-1 mt-2">
+                            {/* Lucky Spin redemption */}
+                            <Button
+                              size="sm"
+                              className="flex-1 bg-orange-500 hover:bg-orange-600 text-white text-xs"
+                              onClick={async () => {
+                                try {
+                                  const r = await fetch("/api/loyalty/redeem-milestone", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      customerPhone: verifiedPhone,
+                                      milestonePoints: points,
+                                      rewardType: "spins",
+                                    }),
+                                  });
+                                  if (r.ok) {
+                                    queryClient.invalidateQueries({ queryKey: ["loyaltyWallet", verifiedPhone] });
+                                    queryClient.invalidateQueries({ queryKey: ["spinStatus", verifiedPhone] });
+                                    toast({
+                                      title: "Spin added!",
+                                      description: `${spins} lucky spin${spins !== 1 ? "s" : ""} added to your account`,
+                                    });
+                                  } else {
+                                    const err = await r.json();
+                                    toast({
+                                      title: "Redeem failed",
+                                      description: err.error || "Unknown error",
+                                      variant: "destructive",
+                                    });
+                                  }
+                                } catch {
+                                  toast({
+                                    title: "Error",
+                                    description: "Network error during redemption",
+                                    variant: "destructive",
+                                  });
+                                }
+                              }}
+                              disabled={!canAfford}
+                            >
+                              🎡 {spins} Spin{spins > 1 ? "s" : ""}
+                            </Button>
+
+                            {/* Coupon redemption */}
+                            <Button
+                              size="sm"
+                              className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs"
+                              onClick={async () => {
+                                try {
+                                  const r = await fetch("/api/loyalty/redeem-milestone", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      customerPhone: verifiedPhone,
+                                      milestonePoints: points,
+                                      rewardType: "coupon",
+                                    }),
+                                  });
+                                  if (r.ok) {
+                                    queryClient.invalidateQueries({ queryKey: ["loyaltyWallet", verifiedPhone] });
+                                    toast({
+                                      title: "Coupon generated!",
+                                      description: `${couponPercent}% OFF coupon added to your wallet`,
+                                    });
+                                  } else {
+                                    const err = await r.json();
+                                    toast({
+                                      title: "Redeem failed",
+                                      description: err.error || "Unknown error",
+                                      variant: "destructive",
+                                    });
+                                  }
+                                } catch {
+                                  toast({
+                                    title: "Error",
+                                    description: "Network error during redemption",
+                                    variant: "destructive",
+                                  });
+                                }
+                              }}
+                              disabled={!canAfford}
+                            >
+                              🎁 {couponPercent}% OFF
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Show status if not available for redeem */}
+                        {!isAvailableForRedeem && !isRedeemed && (
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            Need {points - (wallet.currentPoints || 0)} more points
+                          </p>
+                        )}
+                        {isRedeemed && (
+                          <p className="text-[10px] text-green-600 mt-1">
+                            Redeemed for {m.rewardType === "spins" ? `${m.spinsAwarded} spins` : `${m.couponPercent}% coupon`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Fallback CTA if no phone or no wallet data yet */}
+        {!verifiedPhone || !wallet ? (
           <button
             onClick={() => navigate(`/table/${tableCode}/rewards`)}
             className="w-full bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-[16px] p-4 shadow-[0_2px_12px_rgba(192,138,77,0.08)] text-left"
@@ -661,6 +819,12 @@ export default function CustomerMenu() {
               <ChevronRight className="w-4 h-4 text-amber-400 shrink-0" />
             </div>
           </button>
+        ) : (
+          /* If phone exists but no milestones data loaded yet */(
+            <div className="h-6 bg-amber-100 rounded-md d-flex align-items-center justify-center text-amber-600 text-sm">
+              Loading rewards…
+            </div>
+          )}
         )}
       </div>
 

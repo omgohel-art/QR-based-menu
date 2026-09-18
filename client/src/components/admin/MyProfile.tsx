@@ -134,10 +134,10 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Profile Settings</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Manage your personal information and account details.</p>
-        </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{t("profileSettings")}</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{t("manageProfileInfo")}</p>
+          </div>
       </div>
 
       <div className="space-y-6">
@@ -149,7 +149,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
               className="absolute top-0 right-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 rounded-lg transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              Remove Photo
+              {t("removePhoto")}
             </button>
 
             <div className="relative group">
@@ -170,7 +170,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
               </button>
             </div>
             <input ref={inputRef} type="file" accept=".jpg,.jpeg,.png,.webp" onChange={handleFile} className="hidden" />
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">JPG, PNG, WEBP — Max 5 MB</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">{t("yourName")} — Max 5 MB</p>
           </div>
         </Card>
 
@@ -178,17 +178,17 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
         <Card className="p-6 bg-white dark:bg-slate-900">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("email")}</label>
               <Input value={userEmail} disabled className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700" />
-              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5">Email cannot be changed here. Contact support.</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5">{t("emailCannotChange")}</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Name</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("fullName")}</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("yourName")} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Phone</label>
-              <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("phone")}</label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={t("phonePlaceholder")} />
             </div>
           </div>
 
@@ -201,14 +201,14 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-900 dark:text-white">{roleLabel}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Full access to all features</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("fullAccess")}</p>
                 </div>
               </div>
             </div>
 
             {/* Timezone */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Timezone</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("timezone")}</label>
               <div className="relative">
                 <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
                 <select
@@ -232,7 +232,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
               {t("loginPin")}
             </h2>
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
-              Read-only
+              {t("readOnly")}
             </span>
           </div>
           <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
@@ -280,12 +280,12 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
 
         {/* Account Overview */}
         <div>
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">About Your Account</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("aboutYourAccount")}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="p-5 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-2 mb-3">
                 <Calendar className="w-4 h-4 text-amber-500" />
-                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">Account Created</span>
+                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">{t("accountCreated")}</span>
               </div>
               <p className="text-lg font-bold text-slate-900 dark:text-white">{formatDate(createdDate)}</p>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{formatTime(createdDate)}</p>
@@ -294,35 +294,35 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
             <Card className="p-5 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-2 mb-3">
                 <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400" />
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Last Login</span>
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{t("lastLogin")}</span>
               </div>
-              {lastLoginDate ? (
-                <>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white">{formatDate(lastLoginDate)}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <p className="text-sm text-slate-500 dark:text-slate-400">{formatTime(lastLoginDate)}</p>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">Active now</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white">Today</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">Active now</span>
-                  </div>
-                </>
-              )}
+                  {lastLoginDate ? (
+                    <>
+                      <p className="text-lg font-bold text-slate-900 dark:text-white">{formatDate(lastLoginDate)}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-sm text-slate-500 dark:text-slate-400">{formatTime(lastLoginDate)}</p>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">{t("activeNow")}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold text-slate-900 dark:text-white">{t("today")}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">{t("activeNow")}</span>
+                      </div>
+                    </>
+                  )}
             </Card>
 
             <Card className="p-5 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-2 mb-3">
                 <Shield className="w-4 h-4 text-purple-500 dark:text-purple-400" />
-                <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">Account Status</span>
+                <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">{t("accountStatus")}</span>
               </div>
               <div className="flex items-center gap-2 mb-1">
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">Verified</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400">{t("verified")}</span>
               </div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Your account is secure</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{t("accountSecure")}</p>
             </Card>
           </div>
         </div>
@@ -330,7 +330,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
         {/* Additional Information — admin only */}
         {userRole === "admin" && (
         <Card className="p-6 bg-white dark:bg-slate-900">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Additional Information</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("additionalInformation")}</h2>
           <div className="space-y-1">
             {/* Business Preferences */}
             <button
@@ -342,8 +342,8 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   <Settings className="w-5 h-5 text-amber-500" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Business Preferences</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Currency, restaurant status, invoice settings</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("businessPreferences")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("currencyRestaurantStatus")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -363,8 +363,8 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   <Mail className="w-5 h-5 text-blue-500 dark:text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Notification Email</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">All important notifications will be sent here</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("notificationEmail")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("notificationsSentHere")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -385,12 +385,12 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   <Lock className="w-5 h-5 text-amber-500" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Password</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Last changed: Never</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("password")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("lastChangedNever")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">Change Password</span>
+                <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">{t("changePasswordBtn")}</span>
                 <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 transition-colors" />
               </div>
             </button>
@@ -405,12 +405,12 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   <Monitor className="w-5 h-5 text-blue-500 dark:text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Active Sessions</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Manage your active sessions on different devices</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("activeSessions")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("manageActiveSessions")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Manage</span>
+                <span className="text-sm text-slate-500 dark:text-slate-400">{t("manage")}</span>
                 <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-400 transition-colors" />
               </div>
             </button>
@@ -420,7 +420,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
 
         {/* Notification Sound */}
         <Card className="p-6 bg-white dark:bg-slate-900">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Notification Sound</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4">{t("notificationSound")}</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
               <div className="flex items-center gap-3">
@@ -428,8 +428,8 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   <Volume2 className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">Enable Notification Sounds</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Play a sound when new orders arrive</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("enableNotificationSounds")}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t("enableNotificationSoundsDesc")}</p>
                 </div>
               </div>
               <button
@@ -449,7 +449,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
             {soundEnabled && (
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Volume</label>
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{t("volume")}</label>
                   <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{soundVolume}%</span>
                 </div>
                 <input
@@ -467,7 +467,7 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
                   className="gap-1.5 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-950"
                 >
                   <Play className="w-3.5 h-3.5" />
-                  Test Sound
+                  {t("testSound")}
                 </Button>
               </div>
             )}
@@ -479,20 +479,20 @@ export default function MyProfile({ onNavigate }: MyProfileProps) {
             <AlertDialogTrigger asChild>
               <Button variant="outline" className="gap-2 text-red-500 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-600 dark:hover:text-red-400">
                 <Trash2 className="w-4 h-4" />
-                Delete Account
+                {t("deleteAccount")}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Delete Account?</AlertDialogTitle>
+                <AlertDialogTitle>{t("deleteAccountConfirm")}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This action cannot be undone. All your data will be permanently deleted.
+                  {t("deleteAccountWarning")}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
                 <AlertDialogAction onClick={handleDeleteAccount} className="bg-red-600 hover:bg-red-700">
-                  Delete
+                  {t("deleteBtn")}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

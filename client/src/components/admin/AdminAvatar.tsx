@@ -64,7 +64,7 @@ export default function AdminAvatar({ onNavigate }: AdminAvatarProps) {
     staleTime: 2 * 60 * 1000,
   });
 
-  const businessName = settings?.restaurantName || "MAMA Cafe";
+  const businessName = settings?.restaurantName || "";
   const initial = businessName.charAt(0).toUpperCase();
   const userEmail = user?.email || "";
   const profileImage = profile?.profile_image_url || settings?.logoUrl || null;

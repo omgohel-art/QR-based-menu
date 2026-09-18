@@ -1,44 +1,61 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { syncOfflineQueue, getPendingOfflineCount } from "@/lib/offlineQueue";
 import { toast } from "sonner";
 
-interface NetworkStatusContextValue {
+interface NetworkStatusContextType {
   isOnline: boolean;
   isOffline: boolean;
   wasOffline: boolean;
+  pendingCount: { orders: number; settlements: number };
+  syncQueue: () => Promise<void>;
 }
 
-const NetworkStatusContext = createContext<NetworkStatusContextValue>({
-  isOnline: true,
-  isOffline: false,
-  wasOffline: false,
-});
+const NetworkStatusContext = createContext<NetworkStatusContextType | null>(null);
+
+export function useNetworkStatus(): NetworkStatusContextType {
+  const ctx = useContext(NetworkStatusContext);
+  if (!ctx) {
+    throw new Error("useNetworkStatus must be used within NetworkStatusProvider");
+  }
+  return ctx;
+}
 
 export function NetworkStatusProvider({ children }: { children: ReactNode }) {
-  const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [wasOffline, setWasOffline] = useState(false);
-  const wasOfflineRef = useRef(false);
+  const [pendingCount, setPendingCount] = useState({ orders: 0, settlements: 0 });
+
+  const refreshPendingCount = async () => {
+    const counts = await getPendingOfflineCount();
+    setPendingCount(counts);
+  };
+
+  const syncQueue = async () => {
+    if (!navigator.onLine) return;
+    const { syncedOrders, syncedSettlements } = await syncOfflineQueue();
+    if (syncedOrders > 0 || syncedSettlements > 0) {
+      toast.success("Offline data synced successfully", {
+        description: `Synced ${syncedOrders} order(s) and ${syncedSettlements} bill(s).`,
+      });
+    }
+    await refreshPendingCount();
+  };
 
   useEffect(() => {
-    const handleOnline = () => {
+    refreshPendingCount();
+
+    const handleOnline = async () => {
       setIsOnline(true);
-      if (wasOfflineRef.current) {
-        wasOfflineRef.current = false;
-        setWasOffline(true);
-        toast.success("Back Online", {
-          description: "Internet connection restored. All features are available.",
-          duration: 4000,
-        });
-        setTimeout(() => setWasOffline(false), 5000);
-      }
+      setIsOffline(false);
+      setWasOffline(true);
+      setTimeout(() => setWasOffline(false), 5000);
+      await syncQueue();
     };
 
     const handleOffline = () => {
+      setIsOffline(true);
       setIsOnline(false);
-      wasOfflineRef.current = true;
-      toast.error("Offline Mode", {
-        description: "Internet connection lost. Some features are temporarily unavailable.",
-        duration: 8000,
-      });
     };
 
     window.addEventListener("online", handleOnline);
@@ -51,12 +68,8 @@ export function NetworkStatusProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <NetworkStatusContext.Provider value={{ isOnline, isOffline: !isOnline, wasOffline }}>
+    <NetworkStatusContext.Provider value={{ isOnline, isOffline, wasOffline, pendingCount, syncQueue }}>
       {children}
     </NetworkStatusContext.Provider>
   );
-}
-
-export function useNetworkStatus() {
-  return useContext(NetworkStatusContext);
 }

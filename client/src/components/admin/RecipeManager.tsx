@@ -129,7 +129,7 @@ export default function RecipeManager() {
      </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-[200px]">
+          <div className="flex-1 min-w-[150px]">
             <Label>Select menu item</Label>
             <select
               className="border-input focus-visible:border-ring flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none"

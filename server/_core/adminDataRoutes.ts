@@ -3,28 +3,22 @@ import { parsePaginationParams, encodeCursor } from "./pagination";
 import { getDb } from "../db";
 import { sessions, tables, orders, orderItems, menuItems, feedback } from "../../drizzle/schema";
 import { eq, and, desc, gte, sql, inArray } from "drizzle-orm";
-import { getUserIdFromToken } from "./authRoutes";
+import { getUserIdFromToken, getUserRoleAndPermissions } from "./authRoutes";
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+async function requirePermission(req: Request, res: Response, permission: string): Promise<string | null> {
   const userId = getUserIdFromToken(req);
   if (!userId) { res.status(401).json({ error: "Unauthorized" }); return null; }
   try {
-    const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${userId}&select=role`, {
-      headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` },
-    });
-    const profiles = await r.json();
-    if (!profiles?.[0] || profiles[0].role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return null;
+    const { role, permissions } = await getUserRoleAndPermissions(userId);
+    if (role === "admin" || permissions[permission]) {
+      return userId;
     }
-    return userId;
-  } catch {
-    res.status(500).json({ error: "Internal server error" });
+    res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
     return null;
+  } catch {
+    res.status(500).json({ error: "Internal server error" }); return null;
   }
 }
 
@@ -34,7 +28,7 @@ async function requireAdmin(req: Request, res: Response): Promise<string | null>
  */
 router.get("/api/admin/settled-bills", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -110,7 +104,7 @@ router.get("/api/admin/settled-bills", async (req: Request, res: Response) => {
  */
 router.get("/api/admin/settled-bills/count", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -134,7 +128,7 @@ router.get("/api/admin/settled-bills/count", async (req: Request, res: Response)
  */
 router.get("/api/admin/settled-bills/today-revenue", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -160,7 +154,7 @@ router.get("/api/admin/settled-bills/today-revenue", async (req: Request, res: R
  */
 router.get("/api/admin/feedback", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -204,7 +198,7 @@ router.get("/api/admin/feedback", async (req: Request, res: Response) => {
  */
 router.get("/api/admin/feedback/stats", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -244,7 +238,7 @@ router.get("/api/admin/feedback/stats", async (req: Request, res: Response) => {
  */
 router.get("/api/admin/active-tables", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -318,7 +312,7 @@ router.get("/api/admin/active-tables", async (req: Request, res: Response) => {
  */
 router.get("/api/admin/popular-items", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();
@@ -365,7 +359,7 @@ router.get("/api/admin/popular-items", async (req: Request, res: Response) => {
  */
 router.get("/api/admin/settled-bills/history", async (req: Request, res: Response) => {
   try {
-    const userId = await requireAdmin(req, res);
+    const userId = await requirePermission(req, res, "orders");
     if (!userId) return;
 
     const db = await getDb();

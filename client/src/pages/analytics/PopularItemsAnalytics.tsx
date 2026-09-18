@@ -86,7 +86,7 @@ export default function PopularItemsAnalytics() {
     <AnalyticsDrillDown
       title="Product Analytics"
       icon={<Star className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Products" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Products" }]}
       search={search} onSearchChange={setSearch}
       onExport={handleExport} onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

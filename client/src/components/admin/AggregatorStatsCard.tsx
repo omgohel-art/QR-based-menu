@@ -1,3 +1,4 @@
+import { useLocation } from "wouter";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShoppingBag, Truck, HandPlatter, MoreHorizontal, ChevronDown, ChevronRight, Trash2, X } from "lucide-react";
@@ -11,12 +12,12 @@ interface Stats {
   topItemsBySource?: Record<string, { menuItemId: number; name: string; quantity: number; revenue: number }[]>;
 }
 
-const SOURCE_META: Record<string, { label: string; Icon: typeof Truck; dot: string }> = {
-  zomato:  { label: "Zomato",  Icon: Truck,           dot: "bg-red-500" },
-  swiggy:  { label: "Swiggy",  Icon: Truck,           dot: "bg-orange-500" },
-  manual:  { label: "Walk-in", Icon: HandPlatter,     dot: "bg-emerald-500" },
-  other:   { label: "Other",   Icon: MoreHorizontal,  dot: "bg-slate-500" },
-  direct:  { label: "QR orders", Icon: ShoppingBag,    dot: "bg-blue-500" },
+const SOURCE_META: Record<string, { label: string; dot: string }> = {
+  zomato:  { label: "Zomato", dot: "bg-red-500" },
+  swiggy:  { label: "Swiggy", dot: "bg-orange-500" },
+  manual:  { label: "Walk-in", dot: "bg-emerald-500" },
+  other:   { label: "Other", dot: "bg-slate-500" },
+  direct:  { label: "QR orders", dot: "bg-blue-500" },
 };
 
 function fmt(n: number): string {
@@ -25,6 +26,7 @@ function fmt(n: number): string {
 
 export default function AggregatorStatsCard() {
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [windowHrs, setWindowHrs] = useState<number>(24);
   const [showOrders, setShowOrders] = useState(false);
@@ -60,13 +62,24 @@ export default function AggregatorStatsCard() {
       }
       return res.json();
     },
-    onSuccess: () => {
+onSuccess: () => {
       toast.success("External order cancelled - inventory restored");
       qc.invalidateQueries({ queryKey: ["aggregator-orders"] });
       qc.invalidateQueries({ queryKey: ["aggregator-stats"] });
     },
-    onError: (err: Error) => toast.error(err.message),
   });
+
+  const handleSourceClick = (sourceKey: string) => {
+    const sourceRoutes: Record<string, string> = {
+      zomato: "/analytics/zomato",
+      swiggy: "/analytics/swiggy",
+      manual: "/analytics/walkin",
+      other: "/analytics/other",
+      direct: "/analytics/direct",
+    };
+    navigate(sourceRoutes[sourceKey] || "/analytics/orders");
+    setExpanded(null);
+  };
 
   const sourceOrder = ["zomato", "swiggy", "manual", "other", "direct"];
   const totals = data?.bySource || {};
@@ -104,13 +117,11 @@ export default function AggregatorStatsCard() {
           const meta = SOURCE_META[s];
           const stats = totals[s] || { count: 0, revenue: 0, avgOrderValue: 0 };
           const pct = grandCount > 0 ? Math.round((stats.count / grandCount) * 100) : 0;
-          const isOpen = expanded === s;
           return (
-            <button
+            <div
               key={s}
-              type="button"
-              onClick={() => setExpanded(isOpen ? null : s)}
-              className={`text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors ${isOpen ? "bg-slate-50 dark:bg-slate-800" : ""}`}
+              className="p-4 flex flex-col justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              onClick={() => handleSourceClick(s)}
             >
               <div className="flex items-center gap-1.5 mb-1">
                 <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
@@ -119,34 +130,11 @@ export default function AggregatorStatsCard() {
               <div className="text-xl font-bold text-slate-900 dark:text-white">{stats.count}</div>
               <div className="text-xs text-slate-500">{fmt(stats.revenue)}</div>
               <div className="text-[10px] text-slate-400 mt-0.5">{pct}% of orders</div>
-            </button>
+            </div>
           );
         })}
       </div>
 
-      {/* Expanded: top items per source */}
-      {expanded && data?.topItemsBySource?.[expanded] && (
-        <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-          <div className="text-xs font-semibold text-slate-500 uppercase mb-2">
-            Top items - {SOURCE_META[expanded]?.label}
-          </div>
-          {data.topItemsBySource[expanded].length === 0 ? (
-            <div className="text-xs text-slate-400 italic">No items yet</div>
-          ) : (
-            <div className="space-y-1">
-              {data.topItemsBySource[expanded].slice(0, 5).map((it) => (
-                <div key={it.menuItemId} className="flex items-center justify-between text-xs">
-                  <span className="text-slate-700 dark:text-slate-300 truncate flex-1">{it.name}</span>
-                  <span className="text-slate-500 ml-2">{it.quantity}x</span>
-                  <span className="text-slate-900 dark:text-white font-medium ml-2 w-16 text-right">{fmt(it.revenue)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Orders list */}
       {showOrders && (
         <div className="p-4 border-t border-slate-100 dark:border-slate-800 max-h-96 overflow-y-auto">
           {ordersQuery.isLoading ? (
@@ -156,48 +144,23 @@ export default function AggregatorStatsCard() {
           ) : (
             <div className="space-y-2">
               {(ordersQuery.data || []).map((o: any) => {
-                const meta = SOURCE_META[o.orderSource] || SOURCE_META.other;
-                const Icon = meta.Icon;
-                const cancelled = o.orderStatus === "cancelled";
                 return (
-                  <div
-                    key={o.id}
-                    className={`flex items-start gap-2 p-2 rounded-lg border ${cancelled ? "bg-red-50 border-red-200 line-through opacity-60" : "bg-white border-slate-200"}`}
-                  >
-                    <Icon className={`w-4 h-4 mt-0.5 ${meta.dot.replace("bg-", "text-")}`} />
+                  <div key={o.id} className="flex items-start gap-2 p-2 rounded-lg border">
+                    <span className="w-3 h-3 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-slate-900">#{o.orderNumber}</span>
-                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${meta.dot.replace("bg-", "bg-").replace("500", "100")} ${meta.dot.replace("bg-", "text-").replace("500", "700")}`}>
-                          {meta.label}
-                        </span>
-                        {o.aggregatorOrderId && (
-                          <span className="text-[10px] text-slate-500 font-mono">{o.aggregatorOrderId}</span>
-                        )}
+                        <span />{" "}
                       </div>
-                      <div className="text-xs text-slate-600 mt-0.5 truncate">
+                      <div className="text-xs text-slate-600 mt-0.5">
                         {(o.items || []).map((it: any) => `${it.menuItemName || "Item"} x${it.quantity}`).join(", ") || "No items"}
                       </div>
                       <div className="text-xs text-slate-500 mt-0.5">
                         {fmt(parseFloat(o.finalTotalAfterDiscount?.toString() || "0"))}
                         {" - "}
-                        {o.paymentMethod === "aggregator" ? `Paid by ${meta.label}` : (o.paymentMethod || "cash")}
+                        {o.paymentMethod || "cash"}
                       </div>
                     </div>
-                    {!cancelled && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (confirm("Cancel this external order? Inventory will be restored.")) {
-                            cancelMutation.mutate(o.id);
-                          }
-                        }}
-                        className="p-1 text-slate-400 hover:text-red-600"
-                        title="Cancel order"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 );
               })}

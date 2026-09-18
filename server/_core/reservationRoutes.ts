@@ -2,31 +2,22 @@ import { Router, Request, Response } from "express";
 import { getDb } from "../db";
 import { reservations, businessSettings } from "../../drizzle/schema";
 import { eq, desc, and, gte } from "drizzle-orm";
-import { getUserIdFromToken } from "./authRoutes";
+import { getUserIdFromToken, getUserRoleAndPermissions } from "./authRoutes";
 
 const router = Router();
 
-async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+async function requirePermission(req: Request, res: Response, permission: string): Promise<string | null> {
   const userId = getUserIdFromToken(req);
-  if (!userId) {
-    res.status(401).json({ error: "Unauthorized" });
-    return null;
-  }
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return null; }
   try {
-    const API_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-    const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/user_profiles?auth_user_id=eq.${userId}&select=role`, {
-      headers: { apikey: API_KEY, Authorization: `Bearer ${API_KEY}` },
-    });
-    const profiles = await r.json();
-    if (!profiles?.[0] || profiles[0].role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return null;
+    const { role, permissions } = await getUserRoleAndPermissions(userId);
+    if (role === "admin" || permissions[permission]) {
+      return userId;
     }
-    return userId;
-  } catch {
-    res.status(500).json({ error: "Internal server error" });
+    res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
     return null;
+  } catch {
+    res.status(500).json({ error: "Internal server error" }); return null;
   }
 }
 
@@ -81,7 +72,7 @@ router.post("/api/public/reservations", async (req: Request, res: Response) => {
 
 // Admin: List reservations (filterable by date, status)
 router.get("/api/admin/reservations", async (req: Request, res: Response) => {
-  const userId = await requireAdmin(req, res);
+  const userId = await requirePermission(req, res, "bookings");
   if (!userId) return;
 
   try {
@@ -111,7 +102,7 @@ router.get("/api/admin/reservations", async (req: Request, res: Response) => {
 
 // Admin: Update reservation status (confirm / cancel / complete)
 router.patch("/api/admin/reservations/:id", async (req: Request, res: Response) => {
-  const userId = await requireAdmin(req, res);
+  const userId = await requirePermission(req, res, "bookings");
   if (!userId) return;
 
   try {
@@ -142,7 +133,7 @@ router.patch("/api/admin/reservations/:id", async (req: Request, res: Response) 
 
 // Admin: Delete a reservation
 router.delete("/api/admin/reservations/:id", async (req: Request, res: Response) => {
-  const userId = await requireAdmin(req, res);
+  const userId = await requirePermission(req, res, "bookings");
   if (!userId) return;
 
   try {
@@ -157,6 +148,34 @@ router.delete("/api/admin/reservations/:id", async (req: Request, res: Response)
   } catch (err) {
     console.error("[Reservations] Failed to delete:", err);
     res.status(500).json({ error: "Failed to delete reservation" });
+  }
+});
+
+// Admin: Create a new reservation (staff can book tables)
+router.post("/api/admin/reservations", async (req: Request, res: Response) => {
+  try {
+    const db = await getDb();
+    if (!db) return res.status(503).json({ error: "Database not available" });
+
+    const { customerName, customerPhone, date, time, pax, notes } = req.body;
+    if (!customerName || !customerPhone || !date || !time || !pax) {
+      return res.status(400).json({ error: "Missing required fields: customerName, customerPhone, date, time, pax" });
+    }
+
+    const [newReservation] = await db.insert(reservations).values({
+      customerName: String(customerName).slice(0, 128),
+      customerPhone: String(customerPhone).slice(0, 20),
+      date: String(date).slice(0, 10),
+      time: String(time).slice(0, 10),
+      pax: Number(pax),
+      notes: notes ? String(notes) : null,
+      status: "pending",
+    }).returning();
+
+    res.status(201).json(newReservation);
+  } catch (err) {
+    console.error("[Reservations] Failed to create:", err);
+    res.status(500).json({ error: "Failed to create reservation" });
   }
 });
 

@@ -189,16 +189,20 @@ function padLeft(str: string, len: number): string {
 }
 export { padLeft };
 
-export async function fetchPrinterSettings(authToken?: string): Promise<{ printerIp?: string; printerPort: number }> {
+export async function fetchPrinterSettings(authToken?: string): Promise<{ printerIp?: string; printerPort: number; kitchenIp?: string; kitchenPort: number; counterIp?: string; counterPort: number }> {
   let printerIp: string | undefined;
   let printerPort = 9100;
+  let kitchenIp: string | undefined;
+  let kitchenPort = 9100;
+  let counterIp: string | undefined;
+  let counterPort = 9100;
   try {
     const headers: Record<string, string> = {
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${authToken || SUPABASE_ANON_KEY}`,
     };
     const resp = await fire(supabaseBreaker, async () => {
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/businessSettings?select=printerIp,printerPort&limit=1`, {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/businessSettings?select=printerIp,printerPort,kitchenPrinterIp,kitchenPrinterPort,counterPrinterIp,counterPrinterPort&limit=1`, {
         headers,
       });
       if (!r.ok) throw new Error("Settings fetch failed");
@@ -209,38 +213,65 @@ export async function fetchPrinterSettings(authToken?: string): Promise<{ printe
       if (data?.[0]) {
         printerIp = data[0].printerIp || undefined;
         if (typeof data[0].printerPort === "number") printerPort = data[0].printerPort;
+        kitchenIp = data[0].kitchenPrinterIp || undefined;
+        if (typeof data[0].kitchenPrinterPort === "number") kitchenPort = data[0].kitchenPrinterPort;
+        counterIp = data[0].counterPrinterIp || undefined;
+        if (typeof data[0].counterPrinterPort === "number") counterPort = data[0].counterPrinterPort;
       }
     }
   } catch {
     /* ignore */
   }
-  return { printerIp, printerPort };
+  return { printerIp, printerPort, kitchenIp, kitchenPort, counterIp, counterPort };
 }
 
 export async function deliverOrQueue(
   type: "receipt" | "kot",
   printerIp: string,
   printerPort: number,
-  buffer: Buffer
+  buffer: Buffer,
+  printerType: "kot" | "receipt" | "cash" = "receipt",
+  settings?: { kitchenIp?: string; kitchenPort?: number; counterIp?: string; counterPort?: number }
 ): Promise<{ mode: "direct" | "queued"; jobId?: string }> {
   const canDirect =
     ALLOW_LAN_PRINT || !isPrivateIP(printerIp);
 
+  // Determine which printer IP/port to use based on type
+  let targetIp: string;
+  let targetPort: number;
+
+  const kitchenIp = settings?.kitchenIp;
+  const kitchenPort = settings?.kitchenPort || 9100;
+  const counterIp = settings?.counterIp;
+  const counterPort = settings?.counterPort || 9100;
+
+  if (printerType === "kot") {
+    targetIp = kitchenIp || printerIp;
+    targetPort = kitchenPort || printerPort;
+  } else if (printerType === "cash") {
+    targetIp = counterIp || printerIp;
+    targetPort = counterPort || printerPort;
+  } else {
+    // receipt default to counter printer
+    targetIp = counterIp || printerIp;
+    targetPort = counterPort || printerPort;
+  }
+
   if (canDirect) {
     try {
-      await sendToPrinter(printerIp, printerPort, buffer);
+      await sendToPrinter(targetIp, targetPort, buffer);
       return { mode: "direct" };
     } catch (err) {
-      if (!isPrivateIP(printerIp) || !PRINT_AGENT_SECRET) throw err;
+      if (!isPrivateIP(targetIp) || !PRINT_AGENT_SECRET) throw err;
       // Fall through to queue for LAN when direct fails
     }
   }
 
-  if (isPrivateIP(printerIp) && !ALLOW_LAN_PRINT) {
+  if (isPrivateIP(targetIp) && !ALLOW_LAN_PRINT) {
     const job = enqueueJob({
       type,
-      printerIp,
-      printerPort,
+      printerIp: targetIp,
+      printerPort: targetPort,
       payloadBase64: buffer.toString("base64"),
     });
     return { mode: "queued", jobId: job.id };
@@ -249,14 +280,14 @@ export async function deliverOrQueue(
   if (!canDirect) {
     const job = enqueueJob({
       type,
-      printerIp,
-      printerPort,
+      printerIp: targetIp,
+      printerPort: targetPort,
       payloadBase64: buffer.toString("base64"),
     });
     return { mode: "queued", jobId: job.id };
   }
 
-  await sendToPrinter(printerIp, printerPort, buffer);
+  await sendToPrinter(targetIp, targetPort, buffer);
   return { mode: "direct" };
 }
 
@@ -275,8 +306,14 @@ router.post("/api/print-receipt", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Printer IP not configured in Business Settings" });
   }
 
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(printerIp)) {
-    return res.status(400).json({ error: "Hostnames are not allowed for printer IP; use a literal IP address" });
+  // Allow both IP addresses and hostnames; net.createConnection supports hostnames
+  // Validate only if it looks like an IP (basic check), otherwise allow hostname
+  const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(printerIp);
+  if (isIp) {
+    const ipParts = printerIp.split(".").map(Number);
+    if (ipParts.some((p) => p < 0 || p > 255)) {
+      return res.status(400).json({ error: "Invalid printer IP address" });
+    }
   }
 
   if (!receipt) {
@@ -358,7 +395,22 @@ router.post("/api/print-receipt", requireAuth, async (req, res) => {
     doc += cut();
 
     const buffer = Buffer.from(doc, "ascii");
-    const result = await deliverOrQueue("receipt", printerIp, printerPort, buffer);
+    // Receipt routes to counter printer; if payment is cash, also kick drawer after
+    const result = await deliverOrQueue("receipt", printerIp, printerPort, buffer, "receipt", settings);
+
+    // Cash drawer kick: if payment method is cash, send ESC/POS kick command
+    let drawerKickResult = null;
+    if (receipt?.payment && receipt.payment.toLowerCase().includes("cash")) {
+      try {
+        const KICK_CASH_DRAWER = Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]);
+        // Send to counter printer IP/port
+        await sendToPrinter(settings.counterIp || printerIp, settings.counterPort || printerPort, KICK_CASH_DRAWER);
+        drawerKickResult = { success: true, action: "cash_drawer_kicked" };
+      } catch (err) {
+        console.error("Cash drawer kick failed:", err);
+        drawerKickResult = { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+      }
+    }
 
     if (result.mode === "queued") {
       return res.json({
@@ -366,9 +418,15 @@ router.post("/api/print-receipt", requireAuth, async (req, res) => {
         queued: true,
         jobId: result.jobId,
         message: "Receipt queued for local print agent. Run scripts/print-agent.mjs on the café PC.",
+        // Include drawer kick status in response
+        drawerKick: drawerKickResult,
       });
     }
-    res.json({ success: true, queued: false, message: "Receipt printed" });
+    // If printed directly, also perform drawer kick if cash
+    if (receipt?.payment && receipt.payment.toLowerCase().includes("cash") && drawerKickResult?.success) {
+      // Already kicked above, just return success
+    }
+    res.json({ success: true, queued: false, message: "Receipt printed", drawerKick: drawerKickResult });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to print";
     console.error("Print error:", message);
@@ -441,14 +499,15 @@ router.post("/api/print-kot", requireAuth, async (req, res) => {
     doc += cut();
 
     const buffer = Buffer.from(doc, "ascii");
-    const result = await deliverOrQueue("kot", printerIp, printerPort, buffer);
+    // KOT always routes to kitchen printer
+    const result = await deliverOrQueue("kot", printerIp, printerPort, buffer, "kot", settings);
 
     if (result.mode === "queued") {
       return res.json({
         success: true,
         queued: true,
         jobId: result.jobId,
-        message: "KOT queued for local print agent",
+        message: "KOT queued for kitchen print agent",
       });
     }
     res.json({ success: true, queued: false, message: "KOT printed" });

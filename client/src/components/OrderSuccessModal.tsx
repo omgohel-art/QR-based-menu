@@ -3,11 +3,36 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, ShoppingBag, ArrowRight, Star, Gift } from "lucide-react";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
+function formatReceiptForWhatsApp(items: Array<{ name: string; quantity: number; price: number }>, subtotal: number, total: number, table: string, orderNumber: string): string {
+  const date = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const time = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+  const lines: string[] = [];
+  lines.push(`*Order #${orderNumber}*`);
+  lines.push(`Table: ${table}`);
+  lines.push(`Date: ${date} ${time}`);
+  lines.push("");
+  lines.push("*Items*");
+  items.forEach((item, i) => {
+    lines.push(`  ${i + 1}. ${item.name} × ${item.quantity} = ₹${(item.price * item.quantity).toFixed(2)}`);
+  });
+  lines.push("");
+  lines.push(`*Subtotal: ₹${subtotal.toFixed(2)}*`);
+  lines.push(`*Total: ₹${total.toFixed(2)}*`);
+  lines.push("");
+  lines.push("— Generated from QR Café Ordering System");
+  lines.push("👉 Scan QR to order: https://your-cafe.com/qr");
+
+  return lines.join("\n");
+}
+
 interface OrderSuccessModalProps {
   open: boolean;
   orderNumber?: number | null;
   tableLabel?: string;
   total?: number;
+  items?: Array<{ name: string; quantity: number; price: number }>;
+  subtotal?: number;
   onContinue: () => void;
   onViewOrder?: () => void;
 }
@@ -215,6 +240,28 @@ export default function OrderSuccessModal({
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    const waText = formatReceiptForWhatsApp(
+                      items.map((it) => ({
+                        name: it.name || "Item",
+                        quantity: it.quantity || 1,
+                        price: it.priceAtOrderTime || 0,
+                      })),
+                      subtotal,
+                      total,
+                      tableLabel || "Table",
+                      orderNumber?.toString().padStart(3, "0") || ""
+                    );
+                    window.open(`https://wa.me/?text=${encodeURIComponent(waText)}`, "_blank");
+                  }}
+                  className="w-full py-3 px-5 rounded-[14px] bg/0 border border-slate-400 text-slate-700 font-semibold text-sm flex items-center justify-center gap-2 hover:bg-slate-100/50 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.313 10.147a7.967 7.967 0 00-1.157 2.077c-.527 1.017-.98 2.147-1.32 3.264a7.926 7.926 0 00-.381 2.838c-.187.68.037 1.53.518 2.066a7.97 7.97 0 002.057 1.085c1.017-.36 2.054-.574 3.048-.605a7.958 7.958 0 002.688-.352c.546.038 1.095.03 1.628-.082" />
+                  </svg>
+                  Send via WhatsApp Web
+                </button>
                 <button
                   onClick={onContinue}
                   className="w-full py-3 px-5 rounded-[14px] border border-[#E8E0D4] text-[#4A3428] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#F8F4EC] transition-colors"

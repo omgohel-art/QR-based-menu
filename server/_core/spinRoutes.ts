@@ -54,18 +54,20 @@ async function requireStaffOrSelf(req: Request, res: Response, targetPhone: stri
   return false;
 }
 
-async function requireAdmin(req: Request, res: Response): Promise<boolean> {
+import { getUserRoleAndPermissions } from "./authRoutes";
+
+async function requirePermission(req: Request, res: Response, permission: string): Promise<boolean> {
   const userId = getUserIdFromToken(req);
   if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return false;
   }
-  const profile = await fetchUserProfileByAuthId(userId).catch(() => null);
-  if (!profile || profile.role !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return false;
+  const { role, permissions } = await getUserRoleAndPermissions(userId);
+  if (role === "admin" || permissions[permission]) {
+    return true;
   }
-  return true;
+  res.status(403).json({ error: `Access denied: Missing '${permission}' permission` });
+  return false;
 }
 
 // Lucky Spin milestones: [lifetimePoints, spinsAwarded]
@@ -306,7 +308,7 @@ router.post("/api/spin/play", async (req: Request, res: Response) => {
 // CRITICAL (C8 fix): every /api/spin/admin/* endpoint now requires admin auth.
 router.get("/api/spin/admin/rewards", async (req: Request, res: Response) => {
   try {
-    if (!(await requireAdmin(req, res))) return;
+    if (!(await requirePermission(req, res, "customers"))) return;
     const client = sb() as any;
     const { data } = await client.from("spinRewards").select("*").order("id");
     res.json(data || []);
@@ -318,7 +320,7 @@ router.get("/api/spin/admin/rewards", async (req: Request, res: Response) => {
 
 router.post("/api/spin/admin/rewards", async (req: Request, res: Response) => {
   try {
-    if (!(await requireAdmin(req, res))) return;
+    if (!(await requirePermission(req, res, "customers"))) return;
     const { id, label, rewardType, rewardValue, color, probability, enabled } = req.body;
     const client = sb() as any;
 
@@ -348,7 +350,7 @@ router.post("/api/spin/admin/rewards", async (req: Request, res: Response) => {
 
 router.delete("/api/spin/admin/rewards/:id", async (req: Request, res: Response) => {
   try {
-    if (!(await requireAdmin(req, res))) return;
+    if (!(await requirePermission(req, res, "customers"))) return;
     const client = sb() as any;
     await client.from("spinRewards").delete().eq("id", parseInt(req.params.id));
     res.json({ success: true });
@@ -360,7 +362,7 @@ router.delete("/api/spin/admin/rewards/:id", async (req: Request, res: Response)
 
 router.get("/api/spin/admin/history", async (req: Request, res: Response) => {
   try {
-    if (!(await requireAdmin(req, res))) return;
+    if (!(await requirePermission(req, res, "customers"))) return;
     const client = sb() as any;
     const { data } = await client.from("spinHistory").select("*").order("spunAt", { ascending: false }).limit(200);
     res.json(data || []);

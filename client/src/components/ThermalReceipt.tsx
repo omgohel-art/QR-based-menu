@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Printer } from "lucide-react";
 import { DEFAULT_PRINTER_PORT } from "@/lib/constants";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { Loader2, Printer } from "lucide-react";
+import { toast } from "sonner";
 import "./ThermalReceipt.css";
 
 type ThermalReceiptProps = {
@@ -40,12 +41,40 @@ type ThermalReceiptProps = {
   printerIp?: string;
   printerPort?: number;
   onClose: () => void;
+  printKOT?: boolean; // Print Kitchen Order Ticket instead of customer receipt
 };
 
-export default function ThermalReceipt({ data, table, printerIp, printerPort = DEFAULT_PRINTER_PORT, onClose }: ThermalReceiptProps) {
+function escapeForESCPos(text: string): string {
+  // Escape special characters for ESC/POS
+  return text
+    .replace(/\$/g, "\u0024")
+    .replace(/\"/g, "\u0022")
+    .replace(/\&/g, "\u0026")
+    .replace(/\'/g, "\u0027")
+    .replace(/\\/g, "\u005c")
+    .replace(/\//g, "\u002f");
+}
+
+function formatINR(n: number): string {
+  return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+}
+
+function formatNumber(n: number): string {
+  return n.toString().padStart(2, "0");
+}
+
+export default function ThermalReceipt({
+  data,
+  table,
+  printerIp,
+  printerPort = DEFAULT_PRINTER_PORT,
+  onClose,
+  printKOT = false,
+}: ThermalReceiptProps) {
   const { fmtPrice } = useFormatCurrency();
   const [printing, setPrinting] = useState(false);
   const [printStatus, setPrintStatus] = useState<"idle" | "success" | "error">("idle");
+  const [isSocketPrinting, setIsSocketPrinting] = useState(false);
 
   const biz = data;
   const allItems = table.orders.flatMap((o) => o.items);
@@ -75,13 +104,125 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = D
   const dateStr = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
+  // Generate ESC/POS text receipt (for silent socket printing)
+  const generateESCPOSReceipt = (): string => {
+    const lines: string[] = [];
+
+    // Header - Restaurant info
+    lines.push(escapeForESCPos(biz?.restaurantName || "Restaurant"));
+    lines.push(escapeForESCPos(biz?.address || ""));
+    lines.push(escapeForESCPos(`${biz?.city || ""}${biz?.city && biz?.state ? ", " : ""}${biz?.state || ""}`));
+    lines.push(escapeForESCPos(biz?.phone || ""));
+    if (biz?.gstNumber) {
+      lines.push(`GST: ${escapeForESCPos(biz.gstNumber)}`);
+    }
+    lines.push(""); // blank line
+
+    // Invoice header
+    lines.push(`Invoice: ${biz?.invoicePrefix || "INV-"}${String(table.sessionId).padStart(6, "0")}`);
+    lines.push(`Date: ${dateStr}`);
+    lines.push(`Time: ${timeStr}`);
+    lines.push(`Table: ${escapeForESCPos(table.label)}`);
+    if (orderNumbers) {
+      lines.push(`Orders: ${orderNumbers}`);
+    }
+    lines.push(""); // blank line
+
+    // Items table header
+    lines.push("Item                    Qty      Price");
+    lines.push("-------------------------------");
+
+    // Items
+    allItems.map((item, i) => {
+      const itemName = escapeForESCPos(item.menuItemName).substring(0, 20); // limit length
+      const qty = formatNumber(item.quantity);
+      const price = fmtPrice(item.priceAtOrderTime * item.quantity);
+      // ESC/POS simple formatting: left-align name, center qty, right-align price
+      const paddedName = itemName.padEnd(20, " ");
+      lines.push(`${paddedName}${qty.padEnd(6, " ")}${price}`);
+    });
+    lines.push("-------------------------------");
+
+    // Totals
+    lines.push(`Subtotal           ${fmtPrice(subtotal)}`);
+    if (serviceCharge > 0) {
+      lines.push(`Service Charge     ${fmtPrice(serviceCharge)}`);
+    }
+    if (gstEnabled) {
+      lines.push(`CGST (${gstHalf}%)    ${fmtPrice(cgst)}`);
+      lines.push(`SGST (${gstHalf}%)    ${fmtPrice(sgst)}`);
+    }
+    lines.push(`-------------------------------`);
+    lines.push(`Grand Total        ${fmtPrice(grandTotal)}`);
+    lines.push(""); // blank line
+
+    // Payment
+    if (paymentMethods.length > 0) {
+      const paymentText = paymentMethods.map((m) => paymentLabels[m] || m).join(", ");
+      lines.push(`Payment: ${escapeForESCPos(paymentText)}`);
+    }
+    lines.push(""); // blank line
+
+    // Footer
+    if (biz?.footerMessage) {
+      lines.push(escapeForESCPos(biz.footerMessage));
+    }
+
+    return lines.join("\r\n");
+  };
+
+  // Generate KOT (Kitchen Order Ticket) - simplified format for kitchen
+  const generateKOTTicket = (): string => {
+    const lines: string[] = [];
+
+    // KOT Header
+    lines.push("=== KOT === ");
+    lines.push(`Table: ${escapeForESCPos(table.label)}`);
+    lines.push(`Time: ${timeStr}`);
+    lines.push("-------------------------------");
+
+    // Orders
+    const orderNumbers = table.orders
+      .filter((o) => o.orderNumber)
+      .map((o) => `#${String(o.orderNumber).padStart(3, "0")}`)
+      .join(", ");
+    lines.push(`Orders: ${orderNumbers || "N/A"}`);
+    lines.push("");
+
+    // Items
+    lines.push("Item          Qty  Price");
+    lines.push("---------------------");
+
+    allItems.map((item) => {
+      const itemName = escapeForESCPos(item.menuItemName).substring(0, 18);
+      const qty = formatNumber(item.quantity);
+      const price = fmtPrice(item.priceAtOrderTime);
+      lines.push(`${itemName.padEnd(18, " ")} ${qty}   ${price}`);
+    });
+    lines.push("---------------------");
+
+    // Total
+    lines.push(`TOTAL          ${fmtPrice(grandTotal)}`);
+    lines.push("---------------------");
+
+    // Table status
+    lines.push(`Status: Active`);
+    lines.push(`KOT Generated: ${dateStr} ${timeStr}`);
+
+    return lines.join("\r\n");
+  };
+
   const handlePrint = async () => {
     if (!printerIp) {
       setPrintStatus("error");
+      setTimeout(() => setPrintStatus("idle"), 3000);
       return;
     }
+
     setPrinting(true);
     setPrintStatus("idle");
+    setIsSocketPrinting(true);
+
     try {
       const res = await fetch("/api/print-receipt", {
         method: "POST",
@@ -116,18 +257,102 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = D
             grandTotal,
             payment: paymentMethods.map((m) => paymentLabels[m] || m).join(", "),
             footerMessage: biz?.footerMessage || "",
+            // Pass KOT flag
+            isKOT: printKOT,
           },
         }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Print failed");
+
       setPrintStatus("success");
       setTimeout(() => setPrintStatus("idle"), 3000);
-    } catch {
+
+      // Show success message based on print type
+      const message = printKOT ? "KOT sent to kitchen printer" : "Receipt sent to printer";
+      toast.success(message, {
+        description: `Order ${printKOT ? "KOT" : "Receipt"} printed successfully`,
+      });
+    } catch (err) {
+      console.error("Print error:", err);
       setPrintStatus("error");
       setTimeout(() => setPrintStatus("idle"), 5000);
+      toast.error(`Print failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setPrinting(false);
+      setIsSocketPrinting(false);
+    }
+  };
+
+  // Handle KOT-specific print
+  const handleKOTPrint = async () => {
+    if (!printerIp) {
+      setPrintStatus("error");
+      setTimeout(() => setPrintStatus("idle"), 3000);
+      return;
+    }
+
+    setPrinting(true);
+    setPrintStatus("idle");
+    setIsSocketPrinting(true);
+
+    try {
+      const res = await fetch("/api/print-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          printerIp,
+          printerPort,
+          receipt: {
+            restaurantName: biz?.restaurantName || "Restaurant",
+            address: biz?.address || "",
+            city: biz?.city || "",
+            state: biz?.state || "",
+            phone: biz?.phone || "",
+            gstNumber: biz?.gstNumber || "",
+            invoicePrefix: biz?.invoicePrefix || "INV-",
+            sessionId: table.sessionId,
+            date: dateStr,
+            time: timeStr,
+            table: table.label,
+            orders: orderNumbers,
+            items: allItems.map((item) => ({
+              name: item.menuItemName,
+              qty: item.quantity,
+              price: item.priceAtOrderTime,
+            })),
+            subtotal,
+            serviceCharge,
+            gstEnabled,
+            gstHalf: gstHalf,
+            cgst,
+            sgst,
+            grandTotal,
+            payment: paymentMethods.map((m) => paymentLabels[m] || m).join(", "),
+            footerMessage: biz?.footerMessage || "",
+            isKOT: true, // KOT mode
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Print failed");
+
+      setPrintStatus("success");
+      setTimeout(() => setPrintStatus("idle"), 3000);
+
+      toast.success("KOT sent to kitchen", {
+        description: "Kitchen Order Ticket printed successfully",
+      });
+    } catch (err) {
+      console.error("KOT Print error:", err);
+      setPrintStatus("error");
+      setTimeout(() => setPrintStatus("idle"), 5000);
+      toast.error(`KOT print failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setPrinting(false);
+      setIsSocketPrinting(false);
     }
   };
 
@@ -233,33 +458,65 @@ export default function ThermalReceipt({ data, table, printerIp, printerPort = D
           )}
         </div>
 
+        {/* Print Buttons Section */}
         {printerIp && (
-          <button
-            className="receipt-print-btn"
-            onClick={handlePrint}
-            disabled={printing}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
-          >
-            {printing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Printing...
-              </>
-            ) : printStatus === "success" ? (
-              "✓ Sent to Printer"
-            ) : printStatus === "error" ? (
-              "✗ Printer Error"
-            ) : (
-              <>
-                <Printer className="w-4 h-4" />
-                Print to Thermal Printer
-              </>
+          <div className="printer-actions">
+            {/* Customer Receipt Button */}
+            <button
+              className="receipt-print-btn"
+              onClick={handlePrint}
+              disabled={printing}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginBottom: "8px" }}
+            >
+              {printing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Printing...
+                </>
+              ) : printStatus === "success" ? (
+                "✓ Sent to Printer"
+              ) : printStatus === "error" ? (
+                "✗ Printer Error"
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  Print Receipt
+                </>
+              )}
+            </button>
+
+            {/* KOT Button (Kitchen Order Ticket) */}
+            {printKOT || (
+              <button
+                className="receipt-print-btn"
+                onClick={handleKOTPrint}
+                disabled={printing}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginLeft: "8px", background: "#dc2626", color: "white" }}
+              >
+                {printing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Printing...
+                  </>
+                ) : (
+                  "🍽️ KOT"
+                )}
+              </button>
             )}
-          </button>
+
+            {/* Preview PDF Button */}
+            <button
+              className="receipt-print-btn"
+              onClick={() => window.print()}
+              style={{ background: "#2563eb", color: "white", marginLeft: "8px" }}
+            >
+              Preview (PDF)
+            </button>
+          </div>
         )}
-        <button className="receipt-print-btn" onClick={() => window.print()} style={{ background: "#2563eb" }}>
-          Print Preview (PDF)
-        </button>
+
         <button className="receipt-close-btn" onClick={onClose}>
           Close
         </button>

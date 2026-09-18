@@ -60,7 +60,7 @@ export default function TableBreakdownAnalytics() {
     <AnalyticsDrillDown
       title="Table Utilization"
       icon={<LayoutGrid className="w-6 h-6" />}
-      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/" }, { label: "Table Utilization" }]}
+      breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Analytics", href: "/?tab=analytics" }, { label: "Table Utilization" }]}
       search={search} onSearchChange={setSearch}
       onPrint={() => window.print()} onRefresh={() => refetch()}
       loading={isLoading}

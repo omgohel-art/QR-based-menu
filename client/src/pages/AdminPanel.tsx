@@ -9,13 +9,15 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import AdminAvatar from "@/components/admin/AdminAvatar";
 import OnlineIndicator from "@/components/OnlineIndicator";
+import StaffMailboxModal from "@/components/admin/StaffMailboxModal";
 import ChangePassword from "@/components/admin/ChangePassword";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, LogOut, Eye, EyeOff, Shield, Mail, FileText, Sparkles, Download, Languages, BookOpen, ShoppingBag } from "lucide-react";
+import { Settings, LogOut, Eye, EyeOff, Shield, Mail, FileText, Sparkles, Download, Languages, BookOpen, ShoppingBag, Users, Key, Table } from "lucide-react";
 import { toast } from "sonner";
 import Footer from "@/components/marketing/Footer";
 import OnboardingWizard, { isOnboardingDismissed } from "@/components/admin/OnboardingWizard";
 import TrialBanner from "@/components/admin/TrialBanner";
+import QuickPinSwitcher from "@/components/admin/QuickPinSwitcher";
 
 // Lazy-loaded heavy components (only loaded when their tab/page is active)
 const BusinessSettings = lazy(() => import("@/components/BusinessSettings"));
@@ -40,7 +42,6 @@ const AggregatorStatsCard = lazy(() => import("@/components/admin/AggregatorStat
 const StaffManagement = lazy(() => import("@/components/admin/StaffManagement"));
 const StaffActivity = lazy(() => import("@/components/admin/StaffActivity"));
 const StaffProfile = lazy(() => import("@/components/admin/StaffProfile"));
-const LeaveRequestAdmin = lazy(() => import("@/components/admin/LeaveRequestAdmin"));
 const InventoryPanel = lazy(() => import("@/components/admin/InventoryPanel"));
 const RecipeManager = lazy(() => import("@/components/admin/RecipeManager"));
 const SettledBillsHistory = lazy(() => import("@/components/admin/SettledBillsHistory"));
@@ -49,6 +50,7 @@ const Help = lazy(() => import("@/components/admin/Help"));
 const ReservationsPanel = lazy(() => import("@/components/admin/ReservationsPanel"));
 const WhatsAppSettingsPanel = lazy(() => import("@/components/admin/WhatsAppSettingsPanel"));
 const GstReportsPanel = lazy(() => import("@/components/admin/GstReportsPanel"));
+const DailyClosingInventory = lazy(() => import("@/components/admin/DailyClosingInventory"));
 
 const TabFallback = () => (
   <div className="space-y-4">
@@ -80,7 +82,7 @@ export default function AdminPanel() {
   const [, navigate] = useLocation();
   const { profile, logout, loading: authLoading } = useAuth();
   const isAdmin = profile?.role === "admin";
-  const [activeTab, setActiveTab] = useState(() => {
+const [activeTab, setActiveTab] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
     if (tab && ["orders", "orderqueue", "tables", "menu", "analytics", "inventory", "settings"].includes(tab)) return tab;
@@ -89,10 +91,12 @@ export default function AdminPanel() {
   const isKitchenMode = !isAdmin;
   const [settingsSubTab, setSettingsSubTab] = useState<"general" | "business" | "whatsapp" | "gst">("general");
   const [avatarPage, setAvatarPage] = useState<string | null>(null);
-  const [hasViewedLeaveRequests, setHasViewedLeaveRequests] = useState(false);
   const [showEODModal, setShowEODModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => isOnboardingDismissed());
   const [showAggregatorModal, setShowAggregatorModal] = useState(false);
+  const [showQuickPinSwitch, setShowQuickPinSwitch] = useState(false);
+  const [showDailyClosing, setShowDailyClosing] = useState(false);
   const { locale, toggleLocale, t: st } = useStaffLanguage();
 
   useEffect(() => {
@@ -128,32 +132,15 @@ export default function AdminPanel() {
     }
   }, []);
 
-  const { data: pendingLeaveCount } = useQuery({
-    queryKey: ["admin", "pendingLeaveCount"],
-    enabled: isAdmin,
-    refetchInterval: 30000,
-    queryFn: async () => {
-      const res = await fetch("/api/admin/leave-requests");
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return data.filter((r: any) => r.status === "pending").length;
-    },
-  });
-
-  const showLeaveDot = isAdmin && (pendingLeaveCount ?? 0) > 0 && !hasViewedLeaveRequests && avatarPage !== "leave-requests";
-
   const handleAvatarNavigation = useCallback((page: string) => {
-    if (page === "settings") { setActiveTab("settings"); setSettingsSubTab("business"); setAvatarPage(null); setHasViewedLeaveRequests(false); }
+    if (page === "settings") { setActiveTab("settings"); setSettingsSubTab("business"); setAvatarPage(null); }
     else if (page === "back") {
       setAvatarPage((prev) => {
         const next = prev === "profile" || prev === null ? null : "profile";
-        setHasViewedLeaveRequests(false);
         return next;
       });
     }
     else {
-      if (page === "leave-requests") setHasViewedLeaveRequests(true);
-      else setHasViewedLeaveRequests(false);
       setAvatarPage(page);
     }
   }, []);
@@ -166,15 +153,6 @@ export default function AdminPanel() {
       setActiveTab("orderqueue");
     }
   }, [profile]);
-
-  // Change Password State
-  const [cpCurrent, setCpCurrent] = useState("");
-  const [cpNew, setCpNew] = useState("");
-  const [cpConfirm, setCpConfirm] = useState("");
-  const [cpShow, setCpShow] = useState(false);
-  const [cpSubmitting, setCpSubmitting] = useState(false);
-  const [cpError, setCpError] = useState("");
-  const [cpSuccess, setCpSuccess] = useState("");
 
   // Settings States (seed from localStorage for instant persistence, then override from DB)
   const loadStoredSettings = () => {
@@ -385,7 +363,7 @@ export default function AdminPanel() {
                 <Languages className="w-4 h-4" />
                 {st("switchTo")}
               </button>
-              {isAdmin && (
+              {isAdmin && !onboardingDismissed && (
                 <button
                   type="button"
                   onClick={() => setShowOnboarding(true)}
@@ -395,28 +373,59 @@ export default function AdminPanel() {
                   Setup
                 </button>
               )}
-              {isAdmin && (
-                <button
-                  onClick={() => setShowEODModal(true)}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
-                >
-                  <FileText className="w-4 h-4" /> EOD Z-Report
-                </button>
-              )}
-              {isAdmin && (
-                <button
-                  onClick={() => handleAvatarNavigation("leave-requests")}
-                  className="relative p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  title="Staff Leave Requests"
-                >
-                  <Mail className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-                  {showLeaveDot && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse" />
-                  )}
-                </button>
-              )}
-              <OnlineIndicator />
-              <AdminAvatar onNavigate={handleAvatarNavigation} />
+{isAdmin && (
+                  <button
+                    onClick={() => setShowEODModal(true)}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                  >
+                    <FileText className="w-4 h-4" /> EOD Z-Report
+                  </button>
+                )}
+{isAdmin && !onboardingDismissed && (
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickPinSwitch(true)}
+                    className="px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-semibold items-center gap-1.5 hover:bg-amber-100"
+                    title="Quick Staff Switch (4-digit PIN)"
+                  >
+                    <Key className="w-4 h-4" />
+                    PIN
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowDailyClosing(!showDailyClosing)}
+                    className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold items-center gap-1.5"
+                    title="Daily Closing Inventory"
+                  >
+                    <Table className="w-4 h-4" />
+                    Inventory
+                  </button>
+                )}
+
+                <StaffMailboxModal />
+                <OnlineIndicator />
+                <span className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-colors duration-300 ${
+                  isAdmin
+                    ? "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200"
+                    : "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200"
+                }`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {isAdmin ? "Admin" : "Staff"}
+                </span>
+                <AdminAvatar onNavigate={handleAvatarNavigation} />
+<QuickPinSwitcher
+                  isOpen={showQuickPinSwitch}
+                  onClose={() => setShowQuickPinSwitch(false)}
+                  onSwitch={(userId) => {
+                    queryClient.invalidateQueries({ queryKey: ["user_profiles"] });
+                    setActiveTab(isAdmin ? "orders" : "orderqueue");
+                  }}
+                />
+                <DailyClosingInventory
+                  open={showDailyClosing}
+                  onClose={() => setShowDailyClosing(false)}
+                />
             </div>
           </div>
         </div>
@@ -445,7 +454,6 @@ export default function AdminPanel() {
               {avatarPage === "staff-management" && <StaffManagement onNavigate={handleAvatarNavigation} />}
               {avatarPage === "staff-activity" && <StaffActivity onNavigate={handleAvatarNavigation} />}
               {avatarPage === "staff-profile" && <StaffProfile onNavigate={handleAvatarNavigation} />}
-              {avatarPage === "leave-requests" && <LeaveRequestAdmin onNavigate={handleAvatarNavigation} />}
               {avatarPage === "help" && <Help />}
             </Suspense>
           </>
@@ -454,13 +462,11 @@ export default function AdminPanel() {
           <div className="sticky top-[96px] z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 shadow-sm">
             <TabsList className="flex overflow-x-auto scrollbar-hide w-full max-w-7xl mx-auto !h-auto !p-0 !bg-transparent !justify-start">
 {!isKitchenMode && isAdmin && <TabsTrigger value="orders" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("orders")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("tables")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("menu")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("analytics")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="inventory" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("inventory")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="reservations" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("reservations")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="rewards" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("rewards")}</TabsTrigger>}
-              {!isKitchenMode && isAdmin && <TabsTrigger value="settings" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("settingsTab")}</TabsTrigger>}
+               {!isKitchenMode && isAdmin && <TabsTrigger value="tables" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("tables")}</TabsTrigger>}
+               {!isKitchenMode && isAdmin && <TabsTrigger value="menu" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("menu")}</TabsTrigger>}
+               {!isKitchenMode && isAdmin && <TabsTrigger value="analytics" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("analytics")}</TabsTrigger>}
+               {!isKitchenMode && isAdmin && <TabsTrigger value="inventory" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("inventory")}</TabsTrigger>}
+               {!isKitchenMode && isAdmin && <TabsTrigger value="reservations" className="!flex-none shrink-0 !rounded-none !border-x-0 !border-t-0 !border-b-2 !border-transparent data-[state=active]:!border-b-blue-500 data-[state=active]:!text-blue-600 data-[state=active]:!bg-transparent data-[state=active]:!shadow-none px-4 py-3 text-xs md:text-sm">{st("reservations")}</TabsTrigger>}
             </TabsList>
           </div>
 
@@ -641,114 +647,6 @@ export default function AdminPanel() {
               )}
             </Card>
 
-            {/* Security */}
-            <Card className="p-4 md:p-6 bg-white dark:bg-slate-900">
-              <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white mb-4 md:mb-6 flex items-center gap-2">
-                <Shield className="w-5 h-5 md:w-6 md:h-6" />
-                Security
-              </h2>
-
-              {cpSuccess && (
-                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 mb-4">
-                  {cpSuccess}
-                </div>
-              )}
-              {cpError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 mb-4">
-                  {cpError}
-                </div>
-              )}
-
-              <div className="space-y-4 mb-6">
-                <h3 className="text-sm font-semibold text-slate-800">Change Password</h3>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Current Password</label>
-                  <Input
-                    type={cpShow ? "text" : "password"}
-                    value={cpCurrent}
-                    onChange={(e) => setCpCurrent(e.target.value)}
-                    placeholder="Current password"
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">New Password</label>
-                  <Input
-                    type={cpShow ? "text" : "password"}
-                    value={cpNew}
-                    onChange={(e) => setCpNew(e.target.value)}
-                    placeholder="Min. 8 characters"
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Confirm New Password</label>
-                  <Input
-                    type={cpShow ? "text" : "password"}
-                    value={cpConfirm}
-                    onChange={(e) => setCpConfirm(e.target.value)}
-                    placeholder="Re-enter new password"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCpShow(!cpShow)}
-                    className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
-                  >
-                    {cpShow ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    {cpShow ? "Hide" : "Show"} passwords
-                  </button>
-                </div>
-                <Button
-                  onClick={async () => {
-                    setCpError("");
-                    setCpSuccess("");
-                    if (cpNew.length < 8) { setCpError("Password must be at least 8 characters"); return; }
-                    if (cpNew !== cpConfirm) { setCpError("Passwords do not match"); return; }
-                    setCpSubmitting(true);
-                    try {
-                      const session = await supabase.auth.getSession();
-                      const email = session.data.session?.user?.email;
-                      if (!email) { setCpError("Session error. Please re-login."); setCpSubmitting(false); return; }
-                      const { error: reAuthError } = await supabase.auth.signInWithPassword({ email, password: cpCurrent });
-                      if (reAuthError) { setCpError("Current password is incorrect"); setCpSubmitting(false); return; }
-                      const { error: updateError } = await supabase.auth.updateUser({ password: cpNew });
-                      if (updateError) { setCpError(updateError.message); setCpSubmitting(false); return; }
-                      setCpCurrent(""); setCpNew(""); setCpConfirm("");
-                      setCpSuccess("Password changed successfully!");
-                      setTimeout(() => setCpSuccess(""), 4000);
-                    } catch { setCpError("Network error. Please try again."); }
-                    setCpSubmitting(false);
-                  }}
-                  disabled={cpSubmitting}
-                  className="w-full btn-sweep font-semibold"
-                >
-                  {cpSubmitting ? "Saving..." : "Save Password"}
-                </Button>
-              </div>
-
-              <div className="text-center pt-2">
-                <button
-                  onClick={() => navigate("/forgot-password-otp")}
-                  className="text-sm text-blue-500 hover:text-blue-700 hover:underline"
-                >
-                  Forget Password?
-                </button>
-              </div>
-
-              <div className="border-t border-slate-200 pt-4">
-                <Button
-                  onClick={async () => { await logout(); navigate("/login"); }}
-                  variant="outline"
-                  className="w-full gap-2 text-red-500 border-red-200 hover:bg-red-50 hover:text-red-600"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Logout
-                </Button>
-              </div>
-            </Card>
-
             <Suspense fallback={<TabFallback />}>
               <SettledBillsHistory />
             </Suspense>
@@ -832,7 +730,10 @@ export default function AdminPanel() {
       {isAdmin && (
         <OnboardingWizard
           open={showOnboarding}
-          onClose={() => setShowOnboarding(false)}
+          onClose={() => {
+            setShowOnboarding(false);
+            setOnboardingDismissed(isOnboardingDismissed());
+          }}
           onNavigateTab={(tab) => {
             setActiveTab(tab);
             setAvatarPage(null);

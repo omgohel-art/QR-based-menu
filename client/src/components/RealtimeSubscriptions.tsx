@@ -46,6 +46,9 @@ const TABLE_KEY_MAP: Record<string, string[][]> = {
     ["cartSettings"],
     ["bizSettingsPayment"],
   ],
+  serviceRequests: [
+    ["serviceRequests"],
+  ],
 };
 
 export default function RealtimeSubscriptions() {
@@ -100,10 +103,17 @@ export default function RealtimeSubscriptions() {
               const row = payload.new as Record<string, unknown>;
               const tableCode = row.tableCode as string | undefined;
               const requestLabel = row.requestLabel as string | undefined;
+              const reqId = row.id as number | undefined;
+
+              const tables = queryClient.getQueryData<Array<{ tableCode?: string; label?: string }>>(["tables"]);
+              const foundTable = tables?.find((t) => t.tableCode === tableCode || t.label === tableCode);
+              const displayTable = foundTable?.label || tableCode || "unknown";
+
               addNotification({
+                id: reqId ? `service-req-${reqId}` : undefined,
                 type: "system",
                 title: requestLabel ? `Service request: ${requestLabel}` : "Service request received",
-                body: `Table ${tableCode || "unknown"} needs assistance.`,
+                body: `Table ${displayTable} needs assistance.`,
               });
             }
           }
@@ -111,8 +121,38 @@ export default function RealtimeSubscriptions() {
         .subscribe()
     );
 
+    // Fallback polling for service requests every 5 seconds to ensure notifications are never missed
+    const pollInterval = setInterval(async () => {
+      try {
+        const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data } = await supabase
+          .from("serviceRequests")
+          .select("*")
+          .gte("createdAt", fiveMinsAgo)
+          .order("id", { ascending: false })
+          .limit(20);
+
+        if (data && data.length > 0) {
+          const tables = queryClient.getQueryData<Array<{ tableCode?: string; label?: string }>>(["tables"]);
+          data.forEach((row) => {
+            const foundTable = tables?.find((t) => t.tableCode === row.tableCode || t.label === row.tableCode);
+            const displayTable = foundTable?.label || row.tableCode || "unknown";
+            addNotification({
+              id: `service-req-${row.id}`,
+              type: "system",
+              title: row.requestLabel ? `Service request: ${row.requestLabel}` : "Service request received",
+              body: `Table ${displayTable} needs assistance.`,
+            });
+          });
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 5000);
+
     return () => {
       channels.forEach(c => supabase.removeChannel(c));
+      clearInterval(pollInterval);
     };
   }, [ready, queryClient, addNotification]);
 

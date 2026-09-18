@@ -683,3 +683,32 @@ export const attendanceRecords = pgTable("attendanceRecords", {
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
 export type InsertAttendanceRecord = typeof attendanceRecords.$inferInsert;
 
+/**
+ * Staff Permissions table: defines which admin panel sections each staff member can access.
+ * Each staff member can have individual ON/OFF toggles for each permission section.
+ */
+export const staffPermissions = pgTable("staff_permissions", {
+  id: serial("id").primaryKey(),
+  authUserId: varchar("auth_user_id", { length: 64 }).notNull().unique(),
+  // Section permissions (true = ON/allowed, false = OFF/denied)
+  orders: boolean("orders").default(true).notNull(),
+  tables: boolean("tables").default(true).notNull(),
+  menu: boolean("menu").default(true).notNull(),
+  analytics: boolean("analytics").default(true).notNull(),
+  inventory: boolean("inventory").default(true).notNull(),
+  customers: boolean("customers").default(true).notNull(),
+  staffManagement: boolean("staff_management").default(true).notNull(),
+  bookings: boolean("bookings").default(true).notNull(),
+  reports: boolean("reports").default(true).notNull(),
+  settings: boolean("settings").default(true).notNull(),
+  externalOrders: boolean("external_orders").default(true).notNull(),
+  payments: boolean("payments").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  authUserIdIdx: index("staffPermissions_auth_user_id_idx").on(table.authUserId),
+}));
+
+export type StaffPermissions = typeof staffPermissions.$inferSelect;
+export type InsertStaffPermissions = typeof staffPermissions.$inferInsert;
+

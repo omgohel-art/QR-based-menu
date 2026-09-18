@@ -376,19 +376,19 @@ export default function InventoryPanel() {
         <TabsContent value="items" className="space-y-4">
           {/* Search & Filters */}
           <div className="flex flex-wrap gap-3">
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative flex-1 min-w-[150px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <Input placeholder="Search items..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="pl-9" />
             </div>
             <Select value={filterCategory} onValueChange={(v) => { setFilterCategory(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Categories" /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="All Categories" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
                 {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[160px]"><SelectValue placeholder="All Status" /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[160px]"><SelectValue placeholder="All Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="low">Low Stock</SelectItem>
@@ -483,7 +483,7 @@ export default function InventoryPanel() {
         <TabsContent value="history" className="space-y-4">
           <div className="flex items-center gap-3">
             <Select value={historyItemId?.toString() || "all"} onValueChange={(v) => setHistoryItemId(v === "all" ? undefined : parseInt(v))}>
-              <SelectTrigger className="w-[240px]"><SelectValue placeholder="Filter by item" /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[240px]"><SelectValue placeholder="Filter by item" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Items</SelectItem>
                 {itemsData?.items?.map((item) => <SelectItem key={item.id} value={item.id.toString()}>{item.name}</SelectItem>)}
